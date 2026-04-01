@@ -1,0 +1,34 @@
+# Unreal Engine — не коммитить артефакты сборки и кэши
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+
+# Visual Studio / Rider
+.vs/
+.vscode/
+.idea/
+*.VC.db
+*.VC.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.temp
+
+# Crash reports (опционально: можно не игнорировать для отладки)
+Saved/Crashes/
+
+# Python (если появятся скрипты)
+__pycache__/
+*.pyc
