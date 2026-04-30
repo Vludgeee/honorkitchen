@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Configuration xmlns="https://www.unrealengine.com/XML/BuildConfiguration-1.0">
+  <!-- Copy to: MyProject/Saved/UnrealBuildTool/BuildConfiguration.xml (Saved/ is often gitignored). -->
+  <ParallelExecutor>
+    <MaxProcessorCount>1</MaxProcessorCount>
+  </ParallelExecutor>
+</Configuration>

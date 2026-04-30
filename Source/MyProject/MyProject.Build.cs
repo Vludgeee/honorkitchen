@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class MyProject : ModuleRules
@@ -8,6 +9,12 @@ public class MyProject : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+		// Perception/*.h лежат в AIModule/Classes; при сбое IWYU подхватываем явно.
+		PublicIncludePaths.Add(Path.Combine(EngineDirectory, "Source", "Runtime", "AIModule", "Classes"));
+
+		PublicDependencyModuleNames.AddRange(new string[] {
+			"Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
+			"AIModule", "NavigationSystem", "GameplayTasks"
+		});
 	}
 }

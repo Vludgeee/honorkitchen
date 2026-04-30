@@ -10,6 +10,8 @@ public class MyProjectEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V4;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_3;
+		bOverrideBuildEnvironment = true;
+		AdditionalCompilerArguments = "/Zm2000";
 		ExtraModuleNames.Add("MyProject");
 	}
 }
