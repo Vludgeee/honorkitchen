@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MyProjectCharacter.h"
+#include "HonorKitchenPortalNavigatorComponent.h"
 #include "PickupBase.h"
 #include "CrumbPickup.h"
 #include "MedkitPickup.h"
@@ -13,19 +14,33 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputMappingContext.h"
+#include "InputAction.h"
 #include "InputActionValue.h"
+#include "UObject/SoftObjectPath.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/DamageType.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "MyProjectGameMode.h"
+#include "DynamicPostProcess.h"
+#include "HonorKitchenAudioDefaults.h"
+#include "HonorKitchenAudioSettings.h"
+#include "HonorKitchenDevDebug.h"
+#include "HonorKitchenSaveGame.h"
+#include "EngineUtils.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
 #include "Sound/SoundBase.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
+#include "InputCoreTypes.h"
+#include "Math/RotationMatrix.h"
+#include "GameFramework/Controller.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -64,6 +79,18 @@ AMyProjectCharacter::AMyProjectCharacter()
 	FirstPersonCameraComponent->SetRelativeLocation(FVector(-10.f, 0.f, 60.f)); // Position the camera
 	FirstPersonCameraComponent->bUsePawnControlRotation = true;
 
+	FlashlightComponent = CreateDefaultSubobject<USpotLightComponent>(TEXT("Flashlight"));
+	FlashlightComponent->SetupAttachment(FirstPersonCameraComponent);
+	FlashlightComponent->SetRelativeLocation(FVector(12.f, 0.f, -4.f));
+	FlashlightComponent->SetRelativeRotation(FRotator(0.f, 0.f, 0.f));
+	FlashlightComponent->SetVisibility(false);
+	FlashlightComponent->Intensity = 36000.f;
+	FlashlightComponent->AttenuationRadius = 3400.f;
+	FlashlightComponent->InnerConeAngle = 16.f;
+	FlashlightComponent->OuterConeAngle = 34.f;
+	FlashlightComponent->VolumetricScatteringIntensity = 0.55f;
+	FlashlightComponent->CastShadows = true;
+
 	// Create a mesh component that will be used when being viewed from a '1st person' view (when controlling this pawn)
 	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CharacterMesh1P"));
 	Mesh1P->SetOnlyOwnerSee(true);
@@ -74,6 +101,13 @@ AMyProjectCharacter::AMyProjectCharacter()
 	Mesh1P->SetRelativeLocation(FVector(-30.f, 0.f, -150.f));
 
 	PerceptionStimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("PerceptionStimuliSource"));
+
+	PortalNavigator = CreateDefaultSubobject<UHonorKitchenPortalNavigatorComponent>(TEXT("PortalNavigator"));
+
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->MaxWalkSpeed = WalkSpeed;
+	}
 }
 
 float AMyProjectCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -106,11 +140,82 @@ float AMyProjectCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Da
 	return ActualDamage;
 }
 
+ADynamicPostProcess* AMyProjectCharacter::ResolvePostProcessActor()
+{
+	for (TActorIterator<ADynamicPostProcess> It(GetWorld()); It; ++It)
+	{
+		return *It;
+	}
+	FActorSpawnParameters Sp;
+	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	return GetWorld()->SpawnActor<ADynamicPostProcess>(ADynamicPostProcess::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Sp);
+}
+
+float AMyProjectCharacter::GetDamageScreenFlashAlpha() const
+{
+	const UWorld* W = GetWorld();
+	if (!W || DamageScreenFlashEndTime <= 0.0)
+	{
+		return 0.f;
+	}
+	const float Remaining = static_cast<float>(DamageScreenFlashEndTime - W->GetTimeSeconds());
+	if (Remaining <= 0.f)
+	{
+		return 0.f;
+	}
+	return FMath::Clamp(Remaining / 0.35f, 0.f, 1.f);
+}
+
 void AMyProjectCharacter::PlayDamageFeedback(float DamageAmount)
 {
-	if (DamageTakenSound)
+	(void)DamageAmount;
+	if (UWorld* W = GetWorld())
 	{
-		UGameplayStatics::PlaySound2D(this, DamageTakenSound, 0.85f);
+		DamageScreenFlashEndTime = W->GetTimeSeconds() + 0.35f;
+	}
+	USoundBase* const S = DamageTakenSound ? DamageTakenSound.Get() : HonorKitchenAudioDefaults::GetDamageTakenSound();
+	if (S)
+	{
+		UGameplayStatics::PlaySound2D(this, S, HonorKitchenAudioSettings::ScaleVolume(0.85f));
+	}
+	if (ADynamicPostProcess* PP = ResolvePostProcessActor())
+	{
+		PP->PlayDamagePulse(DamageVignettePulseStrength);
+	}
+}
+
+void AMyProjectCharacter::RestoreStatsFromSave(float Health, float MaxHp, const TArray<FHonorKitchenSavedHotbarSlot>& Slots)
+{
+	MaxHealth = FMath::Max(1.f, MaxHp);
+	CurrentHealth = FMath::Clamp(Health, 0.f, MaxHealth);
+	bDead = CurrentHealth <= 0.f;
+	HotbarSlots.SetNum(9);
+	for (int32 i = 0; i < HotbarSlots.Num(); ++i)
+	{
+		HotbarSlots[i].ItemType = EInventoryItemType::None;
+		HotbarSlots[i].Amount = 0;
+	}
+	for (int32 i = 0; i < Slots.Num() && i < HotbarSlots.Num(); ++i)
+	{
+		const EInventoryItemType T = static_cast<EInventoryItemType>(Slots[i].ItemType);
+		if (T != EInventoryItemType::None && Slots[i].Amount > 0)
+		{
+			HotbarSlots[i].ItemType = T;
+			HotbarSlots[i].Amount = Slots[i].Amount;
+		}
+	}
+}
+
+void AMyProjectCharacter::BuildHotbarForSave(TArray<FHonorKitchenSavedHotbarSlot>& Out) const
+{
+	Out.Reset();
+	Out.Reserve(HotbarSlots.Num());
+	for (const FHotbarSlot& Slot : HotbarSlots)
+	{
+		FHonorKitchenSavedHotbarSlot S;
+		S.ItemType = static_cast<uint8>(Slot.ItemType);
+		S.Amount = Slot.Amount;
+		Out.Add(S);
 	}
 }
 
@@ -126,12 +231,49 @@ void AMyProjectCharacter::TryThrowCrumb()
 
 bool AMyProjectCharacter::TryAddItemToHotbar(EInventoryItemType ItemType, int32 Amount)
 {
+	return TryAddItemToHotbarInternal(ItemType, Amount, false);
+}
+
+bool AMyProjectCharacter::TryAddItemToHotbarInternal(EInventoryItemType ItemType, int32 Amount, bool bBypassBatteryObjective)
+{
 	if (ItemType == EInventoryItemType::None || Amount <= 0)
 	{
 		return false;
 	}
 
+	// Батарейки — это цель уровня, а не предмет хотбара.
+	if (!bBypassBatteryObjective && ItemType == EInventoryItemType::Battery)
+	{
+		if (AMyProjectGameMode* GM = Cast<AMyProjectGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
+		{
+			GM->NotifyBatteryCollected(Amount);
+		}
+		return true;
+	}
+
 	int32 Remaining = Amount;
+
+	const int32 StackLimit = FMath::Max(1, MaxItemsPerSlot);
+	for (FHotbarSlot& Slot : HotbarSlots)
+	{
+		if (Remaining <= 0)
+		{
+			break;
+		}
+		if (Slot.ItemType != ItemType || Slot.Amount <= 0)
+		{
+			continue;
+		}
+		const int32 FreeSpace = StackLimit - Slot.Amount;
+		if (FreeSpace <= 0)
+		{
+			continue;
+		}
+		const int32 Added = FMath::Min(FreeSpace, Remaining);
+		Slot.Amount += Added;
+		Remaining -= Added;
+	}
+
 	for (FHotbarSlot& Slot : HotbarSlots)
 	{
 		if (Remaining <= 0)
@@ -143,31 +285,83 @@ bool AMyProjectCharacter::TryAddItemToHotbar(EInventoryItemType ItemType, int32 
 			continue;
 		}
 		Slot.ItemType = ItemType;
-		Slot.Amount = 1;
-		--Remaining;
+		const int32 Added = FMath::Min(StackLimit, Remaining);
+		Slot.Amount = Added;
+		Remaining -= Added;
 	}
 
 	if (Remaining > 0)
 	{
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.2f, FColor::Orange, TEXT("Хотбар заполнен"));
-		}
-#endif
-	}
-
-	const int32 AddedAmount = Amount - Remaining;
-	if (AddedAmount > 0 && ItemType == EInventoryItemType::Battery)
-	{
-		if (AMyProjectGameMode* GM = Cast<AMyProjectGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-		{
-			GM->NotifyBatteryCollected(AddedAmount);
-		}
+		HonorKitchenDevDebug::OnScreen(1.2f, FColor::Orange, TEXT("Хотбар заполнен"));
 	}
 
 	RefreshLegacyCrumbCount();
 	return Remaining < Amount;
+}
+
+void AMyProjectCharacter::GrantTestLoadout()
+{
+	if (!HonorKitchenAudioSettings::IsDeveloperMode())
+	{
+		return;
+	}
+	RefillItemTypeToAmount(EInventoryItemType::Medkit, 3);
+	GrantTestItem(EInventoryItemType::Battery, 3);
+	RefillItemTypeToAmount(EInventoryItemType::Water, 3);
+	RefillItemTypeToAmount(EInventoryItemType::Crumb, 3);
+	RefillItemTypeToAmount(EInventoryItemType::Salt, 3);
+}
+
+void AMyProjectCharacter::GrantTestItem(EInventoryItemType ItemType, int32 TargetAmount)
+{
+	if (!HonorKitchenAudioSettings::IsDeveloperMode())
+	{
+		return;
+	}
+	if (ItemType == EInventoryItemType::Battery)
+	{
+		if (AMyProjectGameMode* GM = Cast<AMyProjectGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
+		{
+			const int32 Goal = FMath::Max(TargetAmount, GM->GetRequiredBatteries());
+			const int32 Need = FMath::Max(0, Goal - GM->GetCollectedBatteries());
+			if (Need > 0)
+			{
+				GM->NotifyBatteryCollected(Need);
+			}
+		}
+		return;
+	}
+
+	RefillItemTypeToAmount(ItemType, FMath::Max(1, TargetAmount));
+}
+
+int32 AMyProjectCharacter::CountItemInHotbar(EInventoryItemType ItemType) const
+{
+	int32 Total = 0;
+	for (const FHotbarSlot& Slot : HotbarSlots)
+	{
+		if (Slot.ItemType == ItemType && Slot.Amount > 0)
+		{
+			Total += Slot.Amount;
+		}
+	}
+	return Total;
+}
+
+void AMyProjectCharacter::RefillItemTypeToAmount(EInventoryItemType ItemType, int32 TargetAmount)
+{
+	if (ItemType == EInventoryItemType::None || TargetAmount <= 0)
+	{
+		return;
+	}
+
+	const int32 Current = CountItemInHotbar(ItemType);
+	if (Current >= TargetAmount)
+	{
+		return;
+	}
+
+	TryAddItemToHotbarInternal(ItemType, TargetAmount - Current, true);
 }
 
 bool AMyProjectCharacter::TryPickupNearbyItem()
@@ -180,21 +374,20 @@ bool AMyProjectCharacter::TryPickupNearbyItem()
 		return false;
 	}
 
-	TArray<AActor*> Pickups;
-	UGameplayStatics::GetAllActorsOfClass(this, APickupBase::StaticClass(), Pickups);
-
 	APickupBase* Best = nullptr;
 	float BestDistSq = FLT_MAX;
 	const FVector Origin = GetActorLocation();
 	const float MaxDistSq = FMath::Square(320.f);
 	float NearestAnyDistSq = FLT_MAX;
-	for (AActor* A : Pickups)
+	int32 ScannedCount = 0;
+	for (TActorIterator<APickupBase> It(GetWorld()); It; ++It)
 	{
-		APickupBase* P = Cast<APickupBase>(A);
+		APickupBase* P = *It;
 		if (!P || P->IsActorBeingDestroyed())
 		{
 			continue;
 		}
+		++ScannedCount;
 		const float D = FVector::DistSquared(Origin, P->GetActorLocation());
 		NearestAnyDistSq = FMath::Min(NearestAnyDistSq, D);
 		if (D <= MaxDistSq && D < BestDistSq)
@@ -204,14 +397,11 @@ bool AMyProjectCharacter::TryPickupNearbyItem()
 		}
 	}
 
-#if !UE_BUILD_SHIPPING
-	if (GEngine)
 	{
 		const float Nearest = (NearestAnyDistSq < FLT_MAX) ? FMath::Sqrt(NearestAnyDistSq) : -1.f;
-		const FString Info = FString::Printf(TEXT("Pickup scan: actors=%d nearest=%.0f"), Pickups.Num(), Nearest);
-		GEngine->AddOnScreenDebugMessage(-1, 1.4f, FColor::Silver, Info);
+		const FString Info = FString::Printf(TEXT("Pickup scan: actors=%d nearest=%.0f"), ScannedCount, Nearest);
+		HonorKitchenDevDebug::OnScreen(1.4f, FColor::Silver, Info);
 	}
-#endif
 
 	if (!Best)
 	{
@@ -222,12 +412,10 @@ bool AMyProjectCharacter::TryPickupNearbyItem()
 	}
 
 	const bool bCollected = Best->TryCollect(this);
-#if !UE_BUILD_SHIPPING
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.2f, bCollected ? FColor::Green : FColor::Red, bCollected ? TEXT("Pickup success") : TEXT("Pickup failed (slot full?)"));
-	}
-#endif
+	HonorKitchenDevDebug::OnScreen(
+		1.2f,
+		bCollected ? FColor::Green : FColor::Red,
+		bCollected ? TEXT("Pickup success") : TEXT("Pickup failed (slot full?)"));
 	return bCollected;
 }
 
@@ -276,12 +464,7 @@ bool AMyProjectCharacter::DropActiveItem()
 	}
 	if (Slot.ItemType == EInventoryItemType::Battery)
 	{
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.2f, FColor::Yellow, TEXT("Батарейку нельзя выбрасывать"));
-		}
-#endif
+		HonorKitchenDevDebug::OnScreen(1.2f, FColor::Yellow, TEXT("Батарейку нельзя выбрасывать"));
 		return false;
 	}
 
@@ -395,6 +578,43 @@ void AMyProjectCharacter::SetActiveHotbarSlot(int32 SlotIndex)
 	ActiveHotbarIndex = FMath::Clamp(SlotIndex, 0, HotbarSlots.Num() - 1);
 }
 
+void AMyProjectCharacter::CycleActiveHotbarSlot(int32 Delta)
+{
+	if (HotbarSlots.Num() <= 0 || Delta == 0)
+	{
+		return;
+	}
+	const int32 Count = HotbarSlots.Num();
+	const int32 NormalizedDelta = Delta > 0 ? 1 : -1;
+	ActiveHotbarIndex = (ActiveHotbarIndex + NormalizedDelta + Count) % Count;
+}
+
+void AMyProjectCharacter::ToggleFlashlight()
+{
+	if (!FlashlightComponent || bDead)
+	{
+		return;
+	}
+	FlashlightComponent->SetVisibility(!FlashlightComponent->IsVisible());
+}
+
+void AMyProjectCharacter::TogglePortalNavigator()
+{
+	if (!HonorKitchenAudioSettings::IsDeveloperMode() || bDead || !PortalNavigator)
+	{
+		return;
+	}
+	PortalNavigator->ToggleNavigator();
+}
+
+void AMyProjectCharacter::ForcePortalNavigatorOff()
+{
+	if (PortalNavigator)
+	{
+		PortalNavigator->SetNavigatorEnabled(false);
+	}
+}
+
 void AMyProjectCharacter::RefreshLegacyCrumbCount()
 {
 	int32 Total = 0;
@@ -406,13 +626,6 @@ void AMyProjectCharacter::RefreshLegacyCrumbCount()
 		}
 	}
 	CrumbCount = Total;
-	if (APlayerController* PC = Cast<APlayerController>(Controller))
-	{
-		if (AMyProjectGameMode* GM = Cast<AMyProjectGameMode>(GetWorld() ? GetWorld()->GetAuthGameMode() : nullptr))
-		{
-			GM->NotifyCrumbsCollected(PC, CrumbCount);
-		}
-	}
 }
 
 FString AMyProjectCharacter::ItemTypeToDisplayName(EInventoryItemType ItemType)
@@ -433,12 +646,7 @@ void AMyProjectCharacter::ThrowCrumb()
 {
 	if (!ThrowActiveItem())
 	{
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Yellow, TEXT("Выбери слот с крошкой"));
-		}
-#endif
+		HonorKitchenDevDebug::OnScreen(1.f, FColor::Yellow, TEXT("Выбери слот с крошкой"));
 	}
 }
 
@@ -470,6 +678,13 @@ void AMyProjectCharacter::BeginPlay()
 	// Call the base class  
 	Super::BeginPlay();
 
+	HonorKitchenAudioDefaults::AssignIfNull(DamageTakenSound, HonorKitchenAudioDefaults::GetDamageTakenSound());
+
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->MaxWalkSpeed = WalkSpeed;
+	}
+
 	bDead = false;
 	CurrentHealth = MaxHealth;
 	HotbarSlots.SetNum(9);
@@ -480,52 +695,161 @@ void AMyProjectCharacter::BeginPlay()
 	ActiveHotbarIndex = 0;
 	RefreshLegacyCrumbCount();
 
+	EnsureInputAssetsLoaded();
+
 	if (PerceptionStimuliSource)
 	{
 		PerceptionStimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
 		PerceptionStimuliSource->RegisterWithPerceptionSystem();
 	}
 
-	// Add Input Mapping Context
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	// Если possession уже есть (игрок уже владеет пешкой), а BeginPlay выполнился позже — добавить контекст.
+	RegisterDefaultMappingContext();
+}
+
+void AMyProjectCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	EnsureInputAssetsLoaded();
+	RegisterDefaultMappingContext();
+}
+
+void AMyProjectCharacter::UnPossessed()
+{
+	RemoveDefaultMappingContext();
+	Super::UnPossessed();
+}
+
+void AMyProjectCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	RemoveDefaultMappingContext();
+	Super::EndPlay(EndPlayReason);
+}
+
+void AMyProjectCharacter::EnsureInputAssetsLoaded()
+{
+	if (!DefaultMappingContext)
 	{
-		if (DefaultMappingContext)
-		{
-			if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
-			{
-				Subsystem->AddMappingContext(DefaultMappingContext, 0);
-			}
-		}
+		DefaultMappingContext = Cast<UInputMappingContext>(
+			FSoftObjectPath(TEXT("/Game/FirstPerson/Input/IMC_Default.IMC_Default")).TryLoad());
+	}
+	if (!JumpAction)
+	{
+		JumpAction = Cast<UInputAction>(
+			FSoftObjectPath(TEXT("/Game/FirstPerson/Input/Actions/IA_Jump.IA_Jump")).TryLoad());
+	}
+	if (!MoveAction)
+	{
+		MoveAction =
+			Cast<UInputAction>(FSoftObjectPath(TEXT("/Game/FirstPerson/Input/Actions/IA_Move.IA_Move")).TryLoad());
+	}
+	if (!LookAction)
+	{
+		LookAction =
+			Cast<UInputAction>(FSoftObjectPath(TEXT("/Game/FirstPerson/Input/Actions/IA_Look.IA_Look")).TryLoad());
+	}
+	if (!LookAction)
+	{
+		LookAction =
+			Cast<UInputAction>(FSoftObjectPath(TEXT("/Game/FirstPerson/Input/Actions/IA_MouseLook.IA_MouseLook")).TryLoad());
+	}
+	if (!ThrowCrumbAction)
+	{
+		ThrowCrumbAction =
+			Cast<UInputAction>(FSoftObjectPath(TEXT("/Game/FirstPerson/Input/Actions/IA_Throw.IA_Throw")).TryLoad());
+	}
+}
+
+void AMyProjectCharacter::RegisterDefaultMappingContext()
+{
+	if (bDefaultInputMappingRegistered || !DefaultMappingContext)
+	{
+		return;
 	}
 
+	APlayerController* PC = Cast<APlayerController>(Controller);
+	if (!PC)
+	{
+		return;
+	}
+
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP))
+	{
+		Subsystem->AddMappingContext(DefaultMappingContext, 0);
+		bDefaultInputMappingRegistered = true;
+	}
 }
+
+void AMyProjectCharacter::RemoveDefaultMappingContext()
+{
+	if (!DefaultMappingContext || !bDefaultInputMappingRegistered)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(Controller);
+	if (!PC)
+	{
+		bDefaultInputMappingRegistered = false;
+		return;
+	}
+
+	if (ULocalPlayer* LP = PC->GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP))
+		{
+			Subsystem->RemoveMappingContext(DefaultMappingContext);
+		}
+	}
+	bDefaultInputMappingRegistered = false;
+}
+
+void AMyProjectCharacter::MoveForwardLegacy(float Value)
+{
+	if (Controller && !FMath::IsNearlyZero(Value))
+	{
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0.f, Rotation.Yaw, 0.f);
+		const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+		AddMovementInput(Direction, Value);
+	}
+}
+
+void AMyProjectCharacter::MoveRightLegacy(float Value)
+{
+	if (Controller && !FMath::IsNearlyZero(Value))
+	{
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0.f, Rotation.Yaw, 0.f);
+		const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+		AddMovementInput(Direction, Value);
+	}
+}
+
 
 //////////////////////////////////////////////////////////////////////////// Input
 
 void AMyProjectCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-	// Set up action bindings
-	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+	EnsureInputAssetsLoaded();
+
+	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	const bool bEnhancedReady =
+		EnhancedInputComponent && DefaultMappingContext && JumpAction && MoveAction && LookAction;
+
+	if (bEnhancedReady)
 	{
-		// Jumping
-		if (JumpAction)
-		{
-			EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-			EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
-		}
-
-		// Moving
-		if (MoveAction)
-		{
-			EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AMyProjectCharacter::Move);
-		}
-
-		// Looking
-		if (LookAction)
-		{
-			EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMyProjectCharacter::Look);
-		}
-
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AMyProjectCharacter::Move);
+		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMyProjectCharacter::Look);
 		if (ThrowCrumbAction)
 		{
 			EnhancedInputComponent->BindAction(ThrowCrumbAction, ETriggerEvent::Started, this, &AMyProjectCharacter::ThrowCrumb);
@@ -533,8 +857,21 @@ void AMyProjectCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	}
 	else
 	{
-		UE_LOG(LogTemplateCharacter, Error, TEXT("'%s' Failed to find an Enhanced Input Component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
+		if (!EnhancedInputComponent)
+		{
+			UE_LOG(LogTemplateCharacter, Warning, TEXT("'%s' Enhanced Input недоступен — используются классические оси DefaultInput."), *GetNameSafe(this));
+		}
+		PlayerInputComponent->BindAxis(TEXT("Turn"), this, &APawn::AddControllerYawInput);
+		PlayerInputComponent->BindAxis(TEXT("LookUp"), this, &APawn::AddControllerPitchInput);
+		PlayerInputComponent->BindAxis(TEXT("MoveForward"), this, &AMyProjectCharacter::MoveForwardLegacy);
+		PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &AMyProjectCharacter::MoveRightLegacy);
+		PlayerInputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &ACharacter::Jump);
+		PlayerInputComponent->BindAction(TEXT("Jump"), IE_Released, this, &ACharacter::StopJumping);
 	}
+
+	// Независимо от MappingContext: прямой биндинг клавиши фонарика.
+	// На русской раскладке это та же физическая клавиша (буква "А"), конфликтов с движением влево нет.
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &AMyProjectCharacter::ToggleFlashlight);
 }
 
 

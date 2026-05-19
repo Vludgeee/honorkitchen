@@ -3,6 +3,8 @@
 #include "Portal.h"
 #include "MyProjectCharacter.h"
 #include "MyProjectGameMode.h"
+#include "HonorKitchenEnemySpriteComponent.h"
+#include "HonorKitchenPortalSpriteCatalog.h"
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -27,17 +29,55 @@ APortal::APortal()
 	PortalVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PortalVisual"));
 	PortalVisual->SetupAttachment(SceneRoot);
 	PortalVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	if (SphereMesh.Succeeded())
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (CylinderMesh.Succeeded())
 	{
-		PortalVisual->SetStaticMesh(SphereMesh.Object);
-		PortalVisual->SetRelativeScale3D(FVector(1.2f, 1.2f, 1.8f));
+		PortalVisual->SetStaticMesh(CylinderMesh.Object);
+		PortalVisual->SetRelativeScale3D(FVector(0.35f, 0.35f, 0.5f));
+		PortalVisual->SetHiddenInGame(true, true);
+		PortalVisual->SetVisibility(false, true);
 	}
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMaterial(
-		TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (ShapeMaterial.Succeeded())
+
+	PortalSprite = CreateDefaultSubobject<UHonorKitchenEnemySpriteComponent>(TEXT("PortalSprite"));
+	PortalSprite->SetupAttachment(SceneRoot);
+	PortalSprite->bBillboardFaceCamera = false;
+	PortalSprite->SpriteFacingYawOffset = 0.f;
+	PortalSprite->SpriteFacingRollOffset = PortalSpriteRollOffset;
+	PortalSprite->SetSpriteFrames(HonorKitchenPortalSpriteCatalog::MakePortalFrames());
+	PortalSprite->SetLegacyVisualToHide(PortalVisual);
+}
+
+FRotator APortal::MakeWallMountRotation(const FVector& NormalIntoRoom)
+{
+	const FVector IntoRoom = NormalIntoRoom.GetSafeNormal2D();
+	if (IntoRoom.IsNearlyZero())
 	{
-		PortalVisual->SetMaterial(0, ShapeMaterial.Object);
+		return FRotator::ZeroRotator;
+	}
+
+	// Plane mesh: нормаль +Z — как у врагов (MakeFromZ к камере), не MakeFromXZ (тот кладёт ребром в стену).
+	const FVector N = FVector(IntoRoom.X, IntoRoom.Y, 0.f).GetSafeNormal();
+	return FRotationMatrix::MakeFromZ(N).Rotator();
+}
+
+void APortal::ApplyWallMount(const FVector& WorldLocation, const FVector& NormalIntoRoom)
+{
+	const FVector IntoRoom = NormalIntoRoom.GetSafeNormal2D();
+	if (!IntoRoom.IsNearlyZero())
+	{
+		const FRotator WallRot = MakeWallMountRotation(IntoRoom);
+		SetActorLocationAndRotation(WorldLocation, WallRot);
+		if (PortalSprite)
+		{
+			PortalSprite->SpriteFacingRollOffset = PortalSpriteRollOffset;
+			PortalSprite->SetExplicitWorldPlaneSize(PortalSpriteWidthUU, PortalSpriteHeightUU);
+			PortalSprite->SetLockedSpriteOrientation(WallRot);
+			PortalSprite->RefreshSpriteVisual();
+		}
+	}
+	else
+	{
+		SetActorLocation(WorldLocation);
 	}
 }
 
@@ -76,4 +116,3 @@ bool APortal::TryActivate(AMyProjectCharacter* Interactor)
 #endif
 	return bOk;
 }
-

@@ -4,8 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "HonorKitchenSpriteSubject.h"
 #include "VilokhvostCharacter.generated.h"
 
+class UHonorKitchenEnemySpriteComponent;
 class UStaticMeshComponent;
 class AMyProjectCharacter;
 
@@ -14,15 +16,21 @@ class AMyProjectCharacter;
  * После атаки возвращается в исходную точку. Магнит — заглушка под диплом.
  */
 UCLASS(Blueprintable, meta = (DisplayName = "Вилохвост (вилка)"))
-class MYPROJECT_API AVilokhvostCharacter : public ACharacter
+class MYPROJECT_API AVilokhvostCharacter : public ACharacter, public IHonorKitchenSpriteSubject
 {
 	GENERATED_BODY()
 
 public:
 	AVilokhvostCharacter();
 
+	virtual bool GetSpritePlayerAware() const override;
+	virtual bool GetSpriteAttackFrame() const override;
+	virtual bool GetSpriteChaseFrame() const override;
+
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void BeginPlay() override;
+
+	bool IsIdleHoveringForAmbientAudio() const { return State == EVilokhvostState::IdleHover; }
 
 protected:
 	enum class EVilokhvostState : uint8
@@ -44,6 +52,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Vilokhvost")
 	TObjectPtr<UStaticMeshComponent> ForkVisual;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Vilokhvost|Sprite")
+	TObjectPtr<UHonorKitchenEnemySpriteComponent> EnemySprite;
+
 	/** Радиус чувствительности к бегу (вибрация), см — 4 м. */
 	UPROPERTY(EditDefaultsOnly, Category = "Vilokhvost|Sense", meta = (ClampMin = "100.0"))
 	float RunVibrationRadiusUU = 400.f;
@@ -61,7 +72,7 @@ protected:
 	float AttackLungeDistanceUU = 130.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Vilokhvost|Combat", meta = (ClampMin = "1.0"))
-	float AttackDamage = 14.f;
+	float AttackDamage = 40.f;
 
 	/** Скорость возврата на Home (интерполяция), см/с. */
 	UPROPERTY(EditDefaultsOnly, Category = "Vilokhvost|Combat", meta = (ClampMin = "50.0"))

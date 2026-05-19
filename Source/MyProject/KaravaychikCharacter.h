@@ -24,6 +24,7 @@ public:
 	void ApplyKaravaychikWaterDebuff();
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void OnPlayerSightGained(AMyProjectCharacter* Player) override;
 
 	/** Радиус привлечения TomatoSaurus и др. врагов (см). */

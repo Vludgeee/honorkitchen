@@ -6,7 +6,7 @@
 #include "PickupBase.h"
 #include "SaltPickup.generated.h"
 
-/** Соль: ПКМ — замедление врагов в радиусе (см. DispatchHotbarUse). */
+/** Соль: ПКМ — временная полоса-барьер перед игроком (см. DispatchHotbarUse). */
 UCLASS(Blueprintable)
 class MYPROJECT_API ASaltPickup : public APickupBase
 {

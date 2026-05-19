@@ -16,12 +16,15 @@ class UInputAction;
 class UInputMappingContext;
 class UAIPerceptionStimuliSourceComponent;
 class USoundBase;
+struct FHonorKitchenSavedHotbarSlot;
+class USpotLightComponent;
 struct FInputActionValue;
 struct FDamageEvent;
 
 class ACrumbProjectile;
 class APickupBase;
 class APortal;
+class UHonorKitchenPortalNavigatorComponent;
 
 USTRUCT(BlueprintType)
 struct FHotbarSlot
@@ -52,9 +55,15 @@ class AMyProjectCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FirstPersonCameraComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Flashlight", meta = (AllowPrivateAccess = "true"))
+	USpotLightComponent* FlashlightComponent;
+
 	/** Регистрация в AI Perception (зрение врагов видит игрока). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI", meta = (AllowPrivateAccess = "true"))
 	UAIPerceptionStimuliSourceComponent* PerceptionStimuliSource;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Navigator", meta = (AllowPrivateAccess = "true"))
+	UHonorKitchenPortalNavigatorComponent* PortalNavigator = nullptr;
 
 	/** MappingContext */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=Input, meta=(AllowPrivateAccess = "true"))
@@ -88,6 +97,8 @@ public:
 	/** Последняя величина урона для подписи на HUD. */
 	float DamageHudLastAmount = 0.f;
 
+	double DamageScreenFlashEndTime = 0.0;
+
 	virtual float TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 	/** Крошки (подбор APickupBase / ACrumbPickup, бросок ThrowCrumbAction). */
@@ -102,6 +113,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
 	int32 ActiveHotbarIndex = 0;
+
+	/** Максимум одинаковых предметов в одном слоте. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (ClampMin = "1", ClampMax = "99"))
+	int32 MaxItemsPerSlot = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crumbs", meta = (AllowPrivateAccess = "true"))
 	UInputAction* ThrowCrumbAction;
@@ -122,6 +137,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool TryAddItemToHotbar(EInventoryItemType ItemType, int32 Amount);
 
+	/** Тестовая выдача всех основных предметов (по 3 шт.) в хотбар. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Debug")
+	void GrantTestLoadout();
+
+	/** Тестовая выдача конкретного типа до целевого количества (обычно до 3). */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Debug")
+	void GrantTestItem(EInventoryItemType ItemType, int32 TargetAmount = 3);
+
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool TryPickupNearbyItem();
 
@@ -137,6 +160,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void SetActiveHotbarSlot(int32 SlotIndex);
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	void CycleActiveHotbarSlot(int32 Delta);
+
+	UFUNCTION(BlueprintCallable, Category = "Flashlight")
+	void ToggleFlashlight();
+
+	UFUNCTION(BlueprintCallable, Category = "Navigator")
+	void TogglePortalNavigator();
+	void ForcePortalNavigatorOff();
+
+	UHonorKitchenPortalNavigatorComponent* GetPortalNavigator() const { return PortalNavigator; }
+
 	const TArray<FHotbarSlot>& GetHotbarSlots() const { return HotbarSlots; }
 	int32 GetActiveHotbarIndex() const { return ActiveHotbarIndex; }
 
@@ -144,8 +179,37 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
 	TObjectPtr<USoundBase> DamageTakenSound;
 
+	/** Сила всплеска виньетки при уроне (0–1). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat", meta = (ClampMin = "0.0", ClampMax = "1.5"))
+	float DamageVignettePulseStrength = 1.f;
+
+	/** Базовая скорость ходьбы игрока (враги подстраиваются под неё). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "100.0"))
+	float WalkSpeed = 600.f;
+
+	/** Красная вспышка по краям экрана при уроне (0 = нет). */
+	UFUNCTION(BlueprintPure, Category = "Combat")
+	float GetDamageScreenFlashAlpha() const;
+
+	/** Восстановить HP и хотбар после загрузки сохранения. */
+	void RestoreStatsFromSave(float Health, float MaxHp, const TArray<FHonorKitchenSavedHotbarSlot>& Slots);
+
+	void BuildHotbarForSave(TArray<FHonorKitchenSavedHotbarSlot>& Out) const;
+
 protected:
-	virtual void BeginPlay();
+	virtual void BeginPlay() override;
+
+	void EnsureInputAssetsLoaded();
+	void RegisterDefaultMappingContext();
+	void RemoveDefaultMappingContext();
+
+	virtual void PossessedBy(AController* NewController) override;
+	virtual void UnPossessed() override;
+
+	void MoveForwardLegacy(float Value);
+	void MoveRightLegacy(float Value);
+
+	bool bDefaultInputMappingRegistered = false;
 
 public:
 		
@@ -183,10 +247,14 @@ protected:
 	void HandleDeath();
 
 	void PlayDamageFeedback(float DamageAmount);
+	class ADynamicPostProcess* ResolvePostProcessActor();
 
 	void ThrowCrumb();
 	void RefreshLegacyCrumbCount();
 	static FString ItemTypeToDisplayName(EInventoryItemType ItemType);
+	bool TryAddItemToHotbarInternal(EInventoryItemType ItemType, int32 Amount, bool bBypassBatteryObjective);
+	int32 CountItemInHotbar(EInventoryItemType ItemType) const;
+	void RefillItemTypeToAmount(EInventoryItemType ItemType, int32 TargetAmount);
 
 	/** Called for movement input */
 	void Move(const FInputActionValue& Value);
@@ -195,9 +263,10 @@ protected:
 	void Look(const FInputActionValue& Value);
 
 protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	// APawn interface
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
-	// End of APawn interface
 
 public:
 	/** Returns Mesh1P subobject **/

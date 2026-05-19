@@ -10,6 +10,14 @@
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "DrawDebugHelpers.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "HonorKitchenEnemySpriteComponent.h"
+#include "HonorKitchenEnemySpriteCatalog.h"
+#include "HonorKitchenDevDebug.h"
+#include "HonorKitchenEnemySoundCatalog.h"
+#include "HonorKitchenEnemyIdleAudioComponent.h"
 
 AVilokhvostCharacter::AVilokhvostCharacter()
 {
@@ -22,6 +30,18 @@ AVilokhvostCharacter::AVilokhvostCharacter()
 	ForkVisual->SetupAttachment(GetCapsuleComponent());
 	ForkVisual->SetRelativeLocation(FVector(0.f, 0.f, -24.f));
 	ForkVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	EnemySprite = CreateDefaultSubobject<UHonorKitchenEnemySpriteComponent>(TEXT("EnemySprite"));
+	EnemySprite->SetupAttachment(GetCapsuleComponent());
+	EnemySprite->SetRelativeLocation(FVector(0.f, 0.f, 8.f));
+	EnemySprite->SpriteWorldSizeUU = 280.f;
+	EnemySprite->bBillboardFaceCamera = true;
+	EnemySprite->SpriteFacingYawOffset = 0.f;
+	EnemySprite->bFlipSpriteVertical = true;
+	EnemySprite->SetSpriteFrames(HonorKitchenEnemySpriteCatalog::MakeVilokhvostFrames());
+	EnemySprite->SetLegacyVisualToHide(ForkVisual);
+
+	CreateDefaultSubobject<UHonorKitchenEnemyIdleAudioComponent>(TEXT("EnemyIdleAudio"));
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
@@ -44,6 +64,30 @@ void AVilokhvostCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	HomeLocation = GetActorLocation();
+	if (EnemySprite)
+	{
+		EnemySprite->RefreshSpriteVisual();
+	}
+	if (ForkVisual && EnemySprite && EnemySprite->IsSpriteActive())
+	{
+		return;
+	}
+	if (ForkVisual)
+	{
+		ForkVisual->SetRelativeScale3D(FVector(0.09f, 0.62f, 0.05f));
+		if (UMaterialInterface* BaseShapeMaterial = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+		{
+			ForkVisual->SetMaterial(0, BaseShapeMaterial);
+			if (UMaterialInstanceDynamic* Mid = ForkVisual->CreateAndSetMaterialInstanceDynamic(0))
+			{
+				const FLinearColor ForkColor(0.46f, 0.08f, 0.56f, 1.f);
+				Mid->SetVectorParameterValue(TEXT("Color"), ForkColor);
+				Mid->SetVectorParameterValue(TEXT("BaseColor"), ForkColor);
+				Mid->SetVectorParameterValue(TEXT("EmissiveColor"), ForkColor * 0.18f);
+			}
+		}
+	}
 }
 
 AMyProjectCharacter* AVilokhvostCharacter::FindPlayerCharacter() const
@@ -93,6 +137,9 @@ bool AVilokhvostCharacter::IsPlayerInSightCone(const AMyProjectCharacter* Player
 
 void AVilokhvostCharacter::StartAttackTowards(const FVector& PlayerLocation)
 {
+	HonorKitchenEnemySoundCatalog::PlayAt(
+		this, GetActorLocation(), EHonorKitchenEnemySpecies::Vilokhvost, EHonorKitchenEnemySoundEvent::Detected, 1.f);
+
 	State = EVilokhvostState::AttackLunge;
 	AttackPhaseTimer = AttackWindupSeconds;
 	bDamageAppliedThisAttack = false;
@@ -114,6 +161,10 @@ void AVilokhvostCharacter::ApplyForkDamage(AMyProjectCharacter* Player)
 	{
 		return;
 	}
+
+	HonorKitchenEnemySoundCatalog::PlayAt(
+		this, GetActorLocation(), EHonorKitchenEnemySpecies::Vilokhvost, EHonorKitchenEnemySoundEvent::Punch, 0.95f);
+
 	UGameplayStatics::ApplyDamage(Player, AttackDamage, nullptr, this, UDamageType::StaticClass());
 	if (UWorld* W = GetWorld())
 	{
@@ -176,4 +227,33 @@ void AVilokhvostCharacter::Tick(float DeltaSeconds)
 	default:
 		break;
 	}
+
+	if (UWorld* W = GetWorld())
+	{
+		const TCHAR* StateText = TEXT("Unknown");
+		switch (State)
+		{
+		case EVilokhvostState::IdleHover: StateText = TEXT("Idle"); break;
+		case EVilokhvostState::AttackLunge: StateText = TEXT("Attack"); break;
+		case EVilokhvostState::ReturningHome: StateText = TEXT("Return"); break;
+		default: break;
+		}
+		const FString Label = FString::Printf(TEXT("Vilokhvost | %s"), StateText);
+		HonorKitchenDevDebug::DrawWorldString(W, GetActorLocation(), Label, FColor::Magenta, 120.f);
+	}
+}
+
+bool AVilokhvostCharacter::GetSpritePlayerAware() const
+{
+	return State != EVilokhvostState::IdleHover;
+}
+
+bool AVilokhvostCharacter::GetSpriteAttackFrame() const
+{
+	return State == EVilokhvostState::AttackLunge;
+}
+
+bool AVilokhvostCharacter::GetSpriteChaseFrame() const
+{
+	return false;
 }

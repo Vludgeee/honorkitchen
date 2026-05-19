@@ -1,26 +1,30 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "PickupBase.h"
+#include "HonorKitchenPickupBillboardComponent.h"
+#include "HonorKitchenAudioDefaults.h"
+#include "HonorKitchenAudioSettings.h"
+#include "HonorKitchenDevDebug.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "MyProjectCharacter.h"
-#include "TomatoSaurusCharacter.h"
+#include "SaltBarrierActor.h"
 #include "KaravaychikCharacter.h"
 #include "Components/SceneComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
+#include "TimerManager.h"
 
 namespace PickupEffectConstants
 {
 	static constexpr float SaltWaterRadiusUU = 500.f;
-	static constexpr float SaltSlowDurationSec = 3.f;
-	static constexpr float SaltSpeedMultiplier = 0.5f;
-	static constexpr float WaterBlindDurationSec = 2.f;
 }
 
 APickupBase::APickupBase()
@@ -44,6 +48,9 @@ APickupBase::APickupBase()
 	PickupVisual->SetCastShadow(true);
 	PickupVisual->SetVisibility(true);
 	PickupVisual->SetHiddenInGame(false);
+
+	PickupBillboard = CreateDefaultSubobject<UHonorKitchenPickupBillboardComponent>(TEXT("PickupBillboard"));
+	PickupBillboard->SetupAttachment(PickupSphere);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ShapeMaterial(
@@ -74,12 +81,28 @@ void APickupBase::BeginPlay()
 		ApplyDefaultVisual();
 	}
 
-#if !UE_BUILD_SHIPPING
-	if (UWorld* W = GetWorld())
+	// Активация спрайта на следующий тик: к BeginPlay RHI-ресурс текстуры может быть ещё не готов.
+	if (PickupBillboard)
 	{
-		DrawDebugSphere(W, GetActorLocation(), 90.f, 14, FColor::Cyan, false, 15.f, 0, 2.f);
+		if (UWorld* World = GetWorld())
+		{
+			const EInventoryItemType Type = ItemType;
+			TWeakObjectPtr<APickupBase> WeakPickup(this);
+			World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [WeakPickup, Type]()
+			{
+				APickupBase* Pickup = WeakPickup.Get();
+				if (!Pickup || !Pickup->PickupBillboard)
+				{
+					return;
+				}
+				if (Pickup->PickupBillboard->ActivateSpriteIfAvailable(Type) && Pickup->PickupVisual)
+				{
+					Pickup->PickupVisual->SetHiddenInGame(true);
+					Pickup->PickupVisual->SetVisibility(false);
+				}
+			}));
+		}
 	}
-#endif
 }
 
 bool APickupBase::ApplyDefaultMaterialIfSpecified()
@@ -138,6 +161,16 @@ void APickupBase::ConfigurePickup(EInventoryItemType NewType, int32 NewAmount)
 
 void APickupBase::OnPickup(AMyProjectCharacter* Collector)
 {
+	(void)Collector;
+	if (USoundBase* S = PickupSound ? PickupSound.Get() : HonorKitchenAudioDefaults::GetPickupSound())
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			this,
+			S,
+			GetActorLocation(),
+			FRotator::ZeroRotator,
+			HonorKitchenAudioSettings::ScaleVolume(0.8f));
+	}
 }
 
 void APickupBase::OnDrop(AMyProjectCharacter* Dropper)
@@ -167,13 +200,7 @@ bool APickupBase::DispatchHotbarUse(EInventoryItemType Type, AMyProjectCharacter
 			return false;
 		}
 		User->CurrentHealth = NewH;
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.2f, FColor::Green,
-				FString::Printf(TEXT("Аптечка: +%.0f HP"), NewH - Prev));
-		}
-#endif
+		HonorKitchenDevDebug::OnScreen(1.2f, FColor::Green, FString::Printf(TEXT("Аптечка: +%.0f HP"), NewH - Prev));
 		return true;
 	}
 	case EInventoryItemType::Salt:
@@ -183,23 +210,18 @@ bool APickupBase::DispatchHotbarUse(EInventoryItemType Type, AMyProjectCharacter
 		{
 			return false;
 		}
-		const FVector Origin = User->GetActorLocation();
-		TArray<AActor*> Found;
-		UGameplayStatics::GetAllActorsOfClass(W, ATomatoSaurusCharacter::StaticClass(), Found);
-		for (AActor* A : Found)
+		const FVector Forward = User->GetActorForwardVector().GetSafeNormal2D();
+		const FVector SpawnDir = Forward.IsNearlyZero() ? FVector::ForwardVector : Forward;
+		const FVector SpawnLoc = User->GetActorLocation() + SpawnDir * 140.f + FVector(0.f, 0.f, 4.f);
+		const FRotator SpawnRot = (SpawnDir.Rotation() + FRotator(0.f, 90.f, 0.f));
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ASaltBarrierActor* Barrier = W->SpawnActor<ASaltBarrierActor>(ASaltBarrierActor::StaticClass(), SpawnLoc, SpawnRot, SpawnParams);
+		if (!Barrier)
 		{
-			ATomatoSaurusCharacter* E = Cast<ATomatoSaurusCharacter>(A);
-			if (E && FVector::Dist(Origin, E->GetActorLocation()) <= PickupEffectConstants::SaltWaterRadiusUU)
-			{
-				E->ApplySaltSlowDebuff(PickupEffectConstants::SaltSlowDurationSec, PickupEffectConstants::SaltSpeedMultiplier);
-			}
+			return false;
 		}
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.2f, FColor::White, TEXT("Соль: замедление врагов (500 см)"));
-		}
-#endif
+		HonorKitchenDevDebug::OnScreen(1.2f, FColor::White, TEXT("Соль: барьер установлен"));
 		return true;
 	}
 	case EInventoryItemType::Water:
@@ -210,30 +232,16 @@ bool APickupBase::DispatchHotbarUse(EInventoryItemType Type, AMyProjectCharacter
 			return false;
 		}
 		const FVector Origin = User->GetActorLocation();
-		TArray<AActor*> Found;
-		UGameplayStatics::GetAllActorsOfClass(W, ATomatoSaurusCharacter::StaticClass(), Found);
-		for (AActor* A : Found)
+		for (TActorIterator<AKaravaychikCharacter> It(W); It; ++It)
 		{
-			if (!A || FVector::Dist(Origin, A->GetActorLocation()) > PickupEffectConstants::SaltWaterRadiusUU)
+			AKaravaychikCharacter* Bread = *It;
+			if (!Bread || FVector::Dist(Origin, Bread->GetActorLocation()) > PickupEffectConstants::SaltWaterRadiusUU)
 			{
 				continue;
 			}
-			if (AKaravaychikCharacter* Bread = Cast<AKaravaychikCharacter>(A))
-			{
-				Bread->ApplyKaravaychikWaterDebuff();
-				continue;
-			}
-			if (ATomatoSaurusCharacter* E = Cast<ATomatoSaurusCharacter>(A))
-			{
-				E->ApplyWaterBlindDebuff(PickupEffectConstants::WaterBlindDurationSec);
-			}
+			Bread->ApplyKaravaychikWaterDebuff();
 		}
-#if !UE_BUILD_SHIPPING
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.2f, FColor::Cyan, TEXT("Вода: ослепление врагов (зрение откл.)"));
-		}
-#endif
+		HonorKitchenDevDebug::OnScreen(1.2f, FColor::Cyan, TEXT("Вода: дебафф только Каравайчику"));
 		return true;
 	}
 	default:

@@ -32,3 +32,15 @@ Saved/Crashes/
 # Python (если появятся скрипты)
 __pycache__/
 *.pyc
+
+# Установщик и локальный путь к билду (не коммитить)
+Dist/
+Tools/installer_game_source_path.txt
+Tools/installer_package_stamp.txt
+
+# Office lock / local thesis docs
+~$*
+*.backup.docx
+
+# Soviet Apartments pack: BuiltData exceeds GitHub 100 MB limit (keep locally or use Git LFS)
+Content/SovietApartments/

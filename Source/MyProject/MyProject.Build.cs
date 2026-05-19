@@ -14,7 +14,8 @@ public class MyProject : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
-			"AIModule", "NavigationSystem", "GameplayTasks"
+			"AIModule", "NavigationSystem", "GameplayTasks",
+			"MediaAssets", "MediaUtils"
 		});
 	}
 }

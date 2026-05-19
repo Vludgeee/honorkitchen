@@ -11,6 +11,7 @@ class USceneComponent;
 class USphereComponent;
 class UStaticMeshComponent;
 class UMaterialInterface;
+class UHonorKitchenPickupBillboardComponent;
 class AMyProjectCharacter;
 
 /**
@@ -69,6 +70,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup")
 	TObjectPtr<UStaticMeshComponent> PickupVisual;
 
+	/** Билборд для Crumb / Battery / Salt / Water при наличии PNG в каталоге. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup")
+	TObjectPtr<UHonorKitchenPickupBillboardComponent> PickupBillboard;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pickup")
 	EInventoryItemType ItemType = EInventoryItemType::None;
 
@@ -77,6 +82,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pickup|Visual")
 	TObjectPtr<UMaterialInterface> PickupMaterialOverride;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pickup|Audio")
+	TObjectPtr<class USoundBase> PickupSound;
 
 	/**
 	 * Базовый материал слота 0 (назначь в BP или положи M_* в /Game/Materials/).

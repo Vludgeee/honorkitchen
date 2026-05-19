@@ -6,7 +6,7 @@
 #include "PickupBase.h"
 #include "WaterPickup.generated.h"
 
-/** Вода: ПКМ — временное отключение зрения у врагов (см. DispatchHotbarUse). */
+/** Вода: ПКМ — дебафф только Каравайчика (см. DispatchHotbarUse). */
 UCLASS(Blueprintable)
 class MYPROJECT_API AWaterPickup : public APickupBase
 {

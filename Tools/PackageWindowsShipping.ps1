@@ -1,11 +1,15 @@
 # Package MyProject (UE 5.3) Shipping build. Run from project root:
 #   .\Tools\PackageWindowsShipping.ps1
 #   .\Tools\PackageWindowsShipping.ps1 -EngineRoot "D:\path\to\UE_5.3"
+# Close Unreal Editor before running (Live Coding blocks UBT).
+# On 16 GB RAM, default pre-build uses MaxParallelActions=2 to avoid MSVC PCH error 1455.
 # Use ASCII-only strings so Windows PowerShell 5.1 reads the file with any system code page.
 
 param(
     [string]$EngineRoot = $env:UE_5_3_ROOT,
     [string]$ArchiveDir = "",
+    [int]$MaxParallelActions = 2,
+    [switch]$SkipPreBuild,
     [switch]$BuildInstaller
 )
 
@@ -52,9 +56,26 @@ New-Item -ItemType Directory -Force -Path $ArchiveDir | Out-Null
 
 Write-Host "Engine: $EngineRoot"
 Write-Host "Archive: $ArchiveDir"
-Write-Host "Starting BuildCookRun (this can take a long time)..."
 
-# Paths with spaces (e.g. "Unreal Projects") must be one quoted token for RunUAT/cmd.
+$Dotnet = Join-Path $EngineRoot "Engine\Binaries\ThirdParty\DotNet\6.0.302\windows\dotnet.exe"
+$UbtDll = Join-Path $EngineRoot "Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll"
+
+if (-not $SkipPreBuild) {
+    Write-Host "Pre-building Editor + Shipping (MaxParallelActions=$MaxParallelActions)..."
+    $ubtTail = @(
+        "-Project=`"$UProject`"",
+        "-WaitMutex",
+        "-MaxParallelActions=$MaxParallelActions"
+    )
+    & $Dotnet $UbtDll "MyProjectEditor" "Win64" "Development" @ubtTail
+    if ($LASTEXITCODE -ne 0) { throw "MyProjectEditor build failed with exit code $LASTEXITCODE" }
+    & $Dotnet $UbtDll "MyProject" "Win64" "Shipping" @ubtTail
+    if ($LASTEXITCODE -ne 0) { throw "MyProject Shipping build failed with exit code $LASTEXITCODE" }
+}
+
+Write-Host "Starting BuildCookRun (cook/stage/pak; this can take a long time)..."
+
+# Cook uses UnrealEditor-Cmd (Editor target). -nocompileeditor skips a second parallel UBT pass.
 $uatArgs = @(
     "BuildCookRun",
     "-project=`"$UProject`"",
@@ -64,6 +85,7 @@ $uatArgs = @(
     "-clientconfig=Shipping",
     "-serverconfig=Shipping",
     "-target=MyProject",
+    "-nocompileeditor",
     "-build",
     "-cook",
     "-stage",

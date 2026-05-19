@@ -9,6 +9,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Engine.h"
+#include "HonorKitchenDevDebug.h"
 #include "Components/StaticMeshComponent.h"
 
 ACrumbProjectile::ACrumbProjectile()
@@ -97,11 +98,8 @@ void ACrumbProjectile::ReportNoiseAt(const FVector& WorldLocation)
 		++NotifiedCount;
 	}
 
-#if !UE_BUILD_SHIPPING
-	if (GEngine)
-	{
-		const FString Msg = FString::Printf(TEXT("Crumb impact: AI notified=%d"), NotifiedCount);
-		GEngine->AddOnScreenDebugMessage(-1, 1.4f, FColor::Yellow, Msg);
-	}
-#endif
+	HonorKitchenDevDebug::OnScreen(
+		1.4f,
+		FColor::Yellow,
+		FString::Printf(TEXT("Crumb impact: AI notified=%d"), NotifiedCount));
 }

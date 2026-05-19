@@ -17,16 +17,26 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/DamageType.h"
+#include "TomatoSaurusAIController.h"
+#include "HonorKitchenAudioDefaults.h"
+#include "HonorKitchenAudioSettings.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "NavigationSystem.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UObjectGlobals.h"
+#include "HonorKitchenEnemySpriteComponent.h"
+#include "HonorKitchenEnemySpriteCatalog.h"
+#include "HonorKitchenEnemyIdleAudioComponent.h"
 
 ATomatoSaurusCharacter::ATomatoSaurusCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	CreateDefaultSubobject<UHonorKitchenEnemyIdleAudioComponent>(TEXT("EnemyIdleAudio"));
 
 	AIControllerClass = ATomatoSaurusAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -46,26 +56,10 @@ ATomatoSaurusCharacter::ATomatoSaurusCharacter()
 	PerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("Perception"));
 
 	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-	// Баланс: зрение / потеря цели (см)
-	SightConfig->SightRadius = 1600.f;
-	SightConfig->LoseSightRadius = 2000.f;
-	SightConfig->PeripheralVisionAngleDegrees = 72.f;
-	SightConfig->PointOfViewBackwardOffset = 0.f;
-	// 0: иначе цель «исчезает» вблизи и AI сбрасывает преследование (типичный порог ~50uu).
-	SightConfig->NearClippingRadius = 0.f;
-	SightConfig->AutoSuccessRangeFromLastSeenLocation = -1.f;
-	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
-	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
-
-	PerceptionComponent->ConfigureSense(*SightConfig);
+	ApplyPerceptionSettings();
 
 	HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
-	HearingConfig->HearingRange = 1700.f;
-	HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
-	HearingConfig->DetectionByAffiliation.bDetectFriendlies = true;
-	HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
-	PerceptionComponent->ConfigureSense(*HearingConfig);
+	ApplyPerceptionSettings();
 
 	PerceptionComponent->SetDominantSense(UAISense_Sight::StaticClass());
 
@@ -73,6 +67,18 @@ ATomatoSaurusCharacter::ATomatoSaurusCharacter()
 	TomatoMesh->SetupAttachment(GetCapsuleComponent());
 	TomatoMesh->SetRelativeLocation(FVector(0.f, 0.f, -96.f + 50.f));
 	TomatoMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	EnemySprite = CreateDefaultSubobject<UHonorKitchenEnemySpriteComponent>(TEXT("EnemySprite"));
+	EnemySprite->SetupAttachment(GetCapsuleComponent());
+	EnemySprite->SetRelativeLocation(FVector(0.f, 0.f, 20.f));
+	EnemySprite->SpriteWorldSizeUU = 340.f;
+	EnemySprite->bBillboardFaceCamera = true;
+	EnemySprite->SpriteFacingYawOffset = 0.f;
+	EnemySprite->SpriteFacingRollOffset = 180.f;
+	EnemySprite->bFlipSpriteHorizontal = false;
+	EnemySprite->bFlipSpriteVertical = false;
+	EnemySprite->SetSpriteFrames(HonorKitchenEnemySpriteCatalog::MakeTomatosaurFrames());
+	EnemySprite->SetLegacyVisualToHide(TomatoMesh);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(
 		TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -90,6 +96,39 @@ ATomatoSaurusCharacter::ATomatoSaurusCharacter()
 		Move->RotationRate = FRotator(0.f, 540.f, 0.f);
 		Move->bOrientRotationToMovement = true;
 		bUseControllerRotationYaw = false;
+	}
+}
+
+void ATomatoSaurusCharacter::ApplyPerceptionSettings()
+{
+	if (SightConfig)
+	{
+		SightConfig->SightRadius = FMath::Max(100.f, SightRadiusUU);
+		SightConfig->LoseSightRadius = FMath::Max(SightConfig->SightRadius + 1.f, LoseSightRadiusUU);
+		SightConfig->PeripheralVisionAngleDegrees = FMath::Clamp(SightHalfAngleDegrees, 1.f, 179.f);
+		SightConfig->PointOfViewBackwardOffset = 0.f;
+		// 0: иначе цель «исчезает» вблизи и AI сбрасывает преследование (типичный порог ~50uu).
+		SightConfig->NearClippingRadius = 0.f;
+		SightConfig->AutoSuccessRangeFromLastSeenLocation = FMath::Max(0.f, AutoSuccessRangeFromLastSeenUU);
+		SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+		SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+		SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
+		if (PerceptionComponent)
+		{
+			PerceptionComponent->ConfigureSense(*SightConfig);
+		}
+	}
+
+	if (HearingConfig)
+	{
+		HearingConfig->HearingRange = FMath::Max(100.f, HearingRangeUU);
+		HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
+		HearingConfig->DetectionByAffiliation.bDetectFriendlies = true;
+		HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
+		if (PerceptionComponent)
+		{
+			PerceptionComponent->ConfigureSense(*HearingConfig);
+		}
 	}
 }
 
@@ -130,6 +169,19 @@ void ATomatoSaurusCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	RefreshAIMovementSpeed();
 
+	// Страховка от "потерял в упор": если игрок рядом и не строго сзади — продолжаем преследование.
+	AMyProjectCharacter* Player = Cast<AMyProjectCharacter>(UGameplayStatics::GetPlayerPawn(this, 0));
+	if (Player && CanSeePlayerByFallback(Player))
+	{
+		const UWorld* World = GetWorld();
+		const float Now = World ? World->GetTimeSeconds() : 0.f;
+		if (!bHasSightOnPlayer || (Now - LastFallbackSightNotifyTime) >= FallbackSightRefreshCooldown)
+		{
+			LastFallbackSightNotifyTime = Now;
+			OnPlayerSightGained(Player);
+		}
+	}
+
 #if !UE_BUILD_SHIPPING && 0
 	if (UWorld* W = GetWorld())
 	{
@@ -145,6 +197,55 @@ void ATomatoSaurusCharacter::Tick(float DeltaSeconds)
 		}
 	}
 #endif
+}
+
+bool ATomatoSaurusCharacter::CanSeePlayerByFallback(const AMyProjectCharacter* Player) const
+{
+	if (!Player || Player->IsDead())
+	{
+		return false;
+	}
+
+	const FVector SelfLoc = GetActorLocation();
+	const FVector PlayerLoc = Player->GetActorLocation();
+	const FVector ToPlayer = PlayerLoc - SelfLoc;
+	const float Dist = ToPlayer.Size2D();
+
+	// В ближнем контакте цель всегда должна детектиться.
+	if (Dist <= CloseRangeAutoDetectUU)
+	{
+		return true;
+	}
+	if (Dist > SightRadiusUU + KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(TomatoFallbackSight), true, this);
+	QueryParams.AddIgnoredActor(this);
+
+	// Двойная проверка LOS (корпус/голова), чтобы уменьшить ложную "слепоту" у мебели.
+	FHitResult MidHit;
+	const FVector TraceStartMid = SelfLoc + FVector(0.f, 0.f, 55.f);
+	const FVector TraceEndMid = PlayerLoc + FVector(0.f, 0.f, 55.f);
+	const bool bMidBlocked = World->LineTraceSingleByChannel(MidHit, TraceStartMid, TraceEndMid, ECC_Visibility, QueryParams);
+	const bool bMidVisible = !bMidBlocked || MidHit.GetActor() == Player;
+	if (bMidVisible)
+	{
+		return true;
+	}
+
+	FHitResult HeadHit;
+	const FVector TraceStartHead = SelfLoc + FVector(0.f, 0.f, 80.f);
+	const FVector TraceEndHead = PlayerLoc + FVector(0.f, 0.f, 95.f);
+	const bool bHeadBlocked = World->LineTraceSingleByChannel(HeadHit, TraceStartHead, TraceEndHead, ECC_Visibility, QueryParams);
+	return !bHeadBlocked || HeadHit.GetActor() == Player;
 }
 
 void ATomatoSaurusCharacter::RefreshAIMovementSpeed()
@@ -164,8 +265,7 @@ void ATomatoSaurusCharacter::RefreshAIMovementSpeed()
 			Base = InvestigateMoveSpeed;
 			break;
 		case ATomatoSaurusAIController::ETomatoAIState::ChaseTarget:
-		case ATomatoSaurusAIController::ETomatoAIState::MeleeApproach:
-			Base = ChaseMoveSpeed;
+			Base = bAttackRecharging ? IdleMoveSpeed * 0.15f : ChaseMoveSpeed;
 			break;
 		default:
 			Base = IdleMoveSpeed;
@@ -215,9 +315,73 @@ void ATomatoSaurusCharacter::ClearWaterBlindDebuff()
 	}
 }
 
+void ATomatoSaurusCharacter::SyncChaseSpeedToPlayer()
+{
+	if (ChaseSpeedVsPlayerRatio <= 0.f)
+	{
+		return;
+	}
+	if (const ACharacter* Player = Cast<ACharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		if (const UCharacterMovementComponent* PlayerMove = Player->GetCharacterMovement())
+		{
+			ChaseMoveSpeed = FMath::Max(IdleMoveSpeed + 10.f, PlayerMove->MaxWalkSpeed * ChaseSpeedVsPlayerRatio);
+		}
+	}
+}
+
 void ATomatoSaurusCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	HonorKitchenAudioDefaults::AssignIfNull(AttackHitSound, HonorKitchenAudioDefaults::GetAttackHitSound());
+	SyncChaseSpeedToPlayer();
+	ApplyPerceptionSettings();
+
+	// Если враг заспавнился мимо NavMesh (например на столе), сдвигаем на ближайшую нав-точку.
+	if (UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(this))
+	{
+		FNavLocation NavLocation;
+		const FVector Start = GetActorLocation();
+		if (NavSys->ProjectPointToNavigation(Start, NavLocation, FVector(500.f, 500.f, 400.f)))
+		{
+			const float DistToNav = FVector::Dist2D(Start, NavLocation.Location);
+			if (DistToNav > 5.f)
+			{
+				SetActorLocation(NavLocation.Location, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+		}
+	}
+
+	SetActorHiddenInGame(false);
+	const bool bUsingSpriteVisual = SetupEnemySpriteVisual();
+	if (TomatoMesh && !bUsingSpriteVisual)
+	{
+		if (!TomatoMesh->GetStaticMesh())
+		{
+			if (UStaticMesh* DefaultSphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")))
+			{
+				TomatoMesh->SetStaticMesh(DefaultSphere);
+			}
+		}
+		TomatoMesh->SetVisibility(true, true);
+		TomatoMesh->SetHiddenInGame(false, true);
+		TomatoMesh->SetRelativeScale3D(BodyMeshScale);
+		TomatoMesh->MarkRenderStateDirty();
+
+		if (UMaterialInterface* BaseShapeMaterial = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+		{
+			TomatoMesh->SetMaterial(0, BaseShapeMaterial);
+			if (UMaterialInstanceDynamic* Mid = TomatoMesh->CreateAndSetMaterialInstanceDynamic(0))
+			{
+				const FLinearColor TomatoColor(0.78f, 0.14f, 0.10f, 1.f);
+				Mid->SetVectorParameterValue(TEXT("Color"), TomatoColor);
+				Mid->SetVectorParameterValue(TEXT("BaseColor"), TomatoColor);
+				Mid->SetVectorParameterValue(TEXT("EmissiveColor"), TomatoColor * 0.12f);
+			}
+		}
+	}
+
 	PerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(this, &ATomatoSaurusCharacter::OnTargetPerceptionUpdated);
 
 	if (DamageSphere)
@@ -225,11 +389,26 @@ void ATomatoSaurusCharacter::BeginPlay()
 		DamageSphere->OnComponentBeginOverlap.AddDynamic(this, &ATomatoSaurusCharacter::OnDamageOverlapBegin);
 		DamageSphere->OnComponentEndOverlap.AddDynamic(this, &ATomatoSaurusCharacter::OnDamageOverlapEnd);
 	}
+
+}
+
+void ATomatoSaurusCharacter::SetAttackRecharging(bool bRecharging)
+{
+	bAttackRecharging = bRecharging;
+	if (DamageSphere)
+	{
+		DamageSphere->SetCollisionEnabled(bRecharging ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryOnly);
+	}
+	RefreshAIMovementSpeed();
 }
 
 void ATomatoSaurusCharacter::OnDamageOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
+	if (bAttackRecharging)
+	{
+		return;
+	}
 	AMyProjectCharacter* P = Cast<AMyProjectCharacter>(OtherActor);
 	if (!P || !GetWorld())
 	{
@@ -239,9 +418,15 @@ void ATomatoSaurusCharacter::OnDamageOverlapBegin(UPrimitiveComponent* Overlappe
 	DamageTarget = P;
 	AController* Inst = GetController();
 	UGameplayStatics::ApplyDamage(P, DamagePerTick, Inst, this, UDamageType::StaticClass());
-
+	const EHonorKitchenEnemySpecies Species = IsA(AKaravaychikCharacter::StaticClass())
+		? EHonorKitchenEnemySpecies::Karavaychik
+		: EHonorKitchenEnemySpecies::TomatoSaurus;
+	HonorKitchenEnemySoundCatalog::PlayAt(this, GetActorLocation(), Species, EHonorKitchenEnemySoundEvent::Punch, 0.9f);
+	if (ATomatoSaurusAIController* AI = Cast<ATomatoSaurusAIController>(GetController()))
+	{
+		AI->BeginPostAttackRecharge();
+	}
 	GetWorldTimerManager().ClearTimer(DamageTickTimer);
-	GetWorldTimerManager().SetTimer(DamageTickTimer, this, &ATomatoSaurusCharacter::ApplyDamageTick, DamageTickInterval, true, DamageTickInterval);
 }
 
 void ATomatoSaurusCharacter::OnDamageOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
@@ -260,6 +445,10 @@ void ATomatoSaurusCharacter::OnDamageOverlapEnd(UPrimitiveComponent* OverlappedC
 
 void ATomatoSaurusCharacter::ApplyDamageTick()
 {
+	if (bAttackRecharging)
+	{
+		return;
+	}
 	UWorld* W = GetWorld();
 	if (!W)
 	{
@@ -337,5 +526,59 @@ void ATomatoSaurusCharacter::OnPlayerSightLost(FVector LastSeenLocation)
 		return;
 	}
 	bHasSightOnPlayer = false;
+	LastFallbackSightNotifyTime = -1000.f;
 	AI->NotifySightLost(LastSeenLocation);
+}
+
+bool ATomatoSaurusCharacter::SetupEnemySpriteVisual()
+{
+	if (!EnemySprite)
+	{
+		return false;
+	}
+
+	EnemySprite->RefreshSpriteVisual();
+	return EnemySprite->IsSpriteActive();
+}
+
+bool ATomatoSaurusCharacter::GetSpritePlayerAware() const
+{
+	if (bHasSightOnPlayer)
+	{
+		return true;
+	}
+	if (const ATomatoSaurusAIController* AI = Cast<ATomatoSaurusAIController>(GetController()))
+	{
+		const ATomatoSaurusAIController::ETomatoAIState State = AI->GetTomatoAIState();
+		return State == ATomatoSaurusAIController::ETomatoAIState::ChaseTarget
+			|| State == ATomatoSaurusAIController::ETomatoAIState::InvestigateNoise;
+	}
+	return false;
+}
+
+bool ATomatoSaurusCharacter::GetSpriteAttackFrame() const
+{
+	// Кадр удара — только короткая фаза перезарядки; в Chase используется Chase→attack в каталоге.
+	if (bAttackRecharging)
+	{
+		return true;
+	}
+	if (const ATomatoSaurusAIController* AI = Cast<ATomatoSaurusAIController>(GetController()))
+	{
+		return AI->IsAttackRecharging();
+	}
+	return false;
+}
+
+bool ATomatoSaurusCharacter::GetSpriteChaseFrame() const
+{
+	if (bAttackRecharging)
+	{
+		return false;
+	}
+	if (const ATomatoSaurusAIController* AI = Cast<ATomatoSaurusAIController>(GetController()))
+	{
+		return AI->GetTomatoAIState() == ATomatoSaurusAIController::ETomatoAIState::ChaseTarget;
+	}
+	return false;
 }

@@ -1,0 +1,3 @@
+; Скопируй как installer_game_source_path.txt и укажи ОДНУ строку — полный путь к папке WindowsNoEditor (без \ в конце).
+; Типичный путь после PackageWindowsShipping.ps1 на этой машине:
+; D:\vlads\Documents\Unreal Projects\HonorKitchen3\MyProject\Build\Packaged\WindowsNoEditor

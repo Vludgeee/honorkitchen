@@ -27,7 +27,7 @@ struct FHUDTheme
 };
 
 /**
- * HUD: здоровье, полоска выносливости (демо), крошки, батарейки, хотбар, метрики.
+ * HUD: здоровье, полоска выносливости (демо), крошки, батарейки, хотбар, метрики, прелоуд / пауза (Canvas).
  */
 UCLASS()
 class MYPROJECT_API AMyProjectHUD : public AHUD
@@ -38,6 +38,14 @@ public:
 	/** Цвета и стиль Canvas-отрисовки (можно переопределить в BP HUD или выставить на экземпляре). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD Theme")
 	FHUDTheme Theme;
+
+	/** Временный флаг тех-метрик (пока нет меню настроек). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD Debug")
+	bool bShowDebugTelemetry = false;
+
+	UFUNCTION(BlueprintCallable, Category = "HUD Debug")
+	void ToggleDebugTelemetry();
+	void ForceDebugTelemetryOff();
 
 protected:
 	virtual void DrawHUD() override;
