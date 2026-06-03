@@ -8,10 +8,9 @@
 AWaterPickup::AWaterPickup()
 {
 	ConfigurePickup(EInventoryItemType::Water, 1);
-	PickupSphereRadius = 48.f;
 	if (PickupVisual)
 	{
-		PickupVisual->SetRelativeScale3D(FVector(0.5f, 0.5f, 0.55f));
+		PickupVisual->SetRelativeScale3D(FVector(1.5f, 1.5f, 1.65f));
 	}
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Mat(TEXT("/Game/Materials/M_Water.M_Water"));
 	if (Mat.Succeeded())

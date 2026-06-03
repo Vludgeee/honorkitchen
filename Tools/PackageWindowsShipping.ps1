@@ -114,5 +114,5 @@ Write-Host "Done. Game folder: $gameFolder"
 Write-Host 'On another PC: install MSVC VC++ Redistributable x64 if needed, then run MyProject.exe from that folder.'
 
 if ($BuildInstaller) {
-    & (Join-Path $PSScriptRoot "BuildInstaller.ps1")
+    & (Join-Path $PSScriptRoot "BuildInstaller.ps1") -GameSource $gameFolder
 }

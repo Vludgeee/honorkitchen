@@ -9,6 +9,7 @@
 #include "HonorKitchenSaveGame.h"
 #include "KitchenGenerator.h"
 #include "ProceduralDungeonGenerator.h"
+#include "Containers/Ticker.h"
 #include "MyProjectGameMode.generated.h"
 
 class APlayerController;
@@ -53,8 +54,11 @@ class AMyProjectGameMode : public AGameModeBase
 public:
 	AMyProjectGameMode();
 
-	/** После смерти: уничтожить пешку и через задержку заново заспавнить игрока у Player Start. */
+	/** После смерти: freeze + death sting, затем экран поражения. */
 	void NotifyPlayerDied(APlayerController* PC);
+	bool IsDeathStingActive() const { return bDeathStingActive; }
+	/** Пауза / победа / поражение / death-sting — мир на TimeDilation=0. */
+	void RefreshWorldTimeFreeze();
 	void NotifyCrumbThrown();
 	void NotifyAIDetectedPlayer();
 	void NotifyBatteryCollected(int32 Amount = 1);
@@ -171,6 +175,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Win")
 	bool bRoundLost = false;
 
+	UPROPERTY(VisibleAnywhere, Category = "Win")
+	bool bDeathStingActive = false;
+
 	UPROPERTY(VisibleAnywhere, Category = "Metrics")
 	int32 CrumbsThrownCount = 0;
 
@@ -274,6 +281,25 @@ protected:
 	void RefreshFrontEndMusic();
 	USoundBase* ResolveMenuMusic() const;
 
+	bool ShouldPlayKitchenReadyAtmosphere() const;
+	void RefreshKitchenReadyAtmosphere();
+	void StopKitchenReadyAtmosphere();
+	void StartInRoundAtmosphereTimer();
+	void StopInRoundAtmosphereTimer();
+	void PlayRandomAtmosphereSting();
+	bool CanPlayInRoundAtmosphere() const;
+
+	bool ShouldPlayRoundAmbient() const;
+	void StartRoundAmbientLoop();
+	void StopRoundAmbientLoop();
+	void RefreshRoundAmbientPlayback();
+
+	UFUNCTION()
+	void OnInRoundAtmosphereTimer();
+
+	UFUNCTION()
+	void OnKitchenReadyStingFinished();
+
 	UPROPERTY(EditDefaultsOnly, Category = "FrontEnd|Audio")
 	TSoftObjectPtr<USoundBase> MenuMusicAsset;
 
@@ -282,6 +308,31 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> MenuMusicComponent;
+
+	/** KitchenReady_Master — только экран «Кухня готова / Enter». */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> KitchenReadyAudioComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> AtmosphereStingAudioComponent;
+
+	/** Тихий фоновый loop (sound_19805) после KitchenReady. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> RoundAmbientAudioComponent;
+
+	FTimerHandle InRoundAtmosphereTimerHandle;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Atmosphere|Audio", meta = (ClampMin = "30.0", ClampMax = "300.0"))
+	float AtmosphereStingIntervalSeconds = 90.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Atmosphere|Audio", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float KitchenReadyVolume = 0.72f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Atmosphere|Audio", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float AtmosphereStingVolume = 0.58f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Atmosphere|Audio", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float RoundAmbientVolume = 0.22f;
 
 	TArray<TWeakObjectPtr<AActor>> LevelActorsHiddenForFrontEnd;
 
@@ -302,6 +353,25 @@ protected:
 	void RestartLoadingVideoFromBeginning();
 
 	bool ShouldPlayFrontEndMenuMusic() const;
+
+	void BeginPlayerDeathSting(APlayerController* PC);
+	void FinishPlayerDeathSting();
+	void CancelDeathStingIfActive();
+	bool ShouldFreezeWorld() const;
+	bool IsLocalGameplayPaused() const;
+	void StopGameplayAudioForDeathSting();
+	UFUNCTION()
+	void OnDeathStingAudioFinished();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UAudioComponent> DeathStingAudioComponent;
+
+	FTSTicker::FDelegateHandle DeathStingRealtimeTickerHandle;
+	float DeathStingRealtimeElapsed = 0.f;
+	TWeakObjectPtr<APlayerController> DeathStingPlayerController;
+
+	bool bWorldFrozenForMenus = false;
+	float SavedTimeDilationBeforeWorldFreeze = 1.f;
 };
 
 

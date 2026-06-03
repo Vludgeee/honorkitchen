@@ -98,6 +98,7 @@ public:
 	float DamageHudLastAmount = 0.f;
 
 	double DamageScreenFlashEndTime = 0.0;
+	bool bDeathVignetteHeld = false;
 
 	virtual float TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
@@ -190,6 +191,10 @@ public:
 	/** Красная вспышка по краям экрана при уроне (0 = нет). */
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	float GetDamageScreenFlashAlpha() const;
+
+	/** Виньетка как при ударе, без звука урона (смертельный урон). */
+	void PlayLethalDamagePresentation();
+	void ClearDeathVignetteHold();
 
 	/** Восстановить HP и хотбар после загрузки сохранения. */
 	void RestoreStatsFromSave(float Health, float MaxHp, const TArray<FHonorKitchenSavedHotbarSlot>& Slots);

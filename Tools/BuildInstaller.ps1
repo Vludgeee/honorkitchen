@@ -36,6 +36,18 @@ if (-not $GameSource -and (Test-Path $pathFile)) {
 }
 
 if (-not $GameSource) {
+    $defaultWin = Join-Path $Root "Build\Packaged\Windows"
+    $defaultNoEd = Join-Path $Root "Build\Packaged\WindowsNoEditor"
+    if (Test-Path (Join-Path $defaultWin "MyProject.exe")) {
+        $GameSource = $defaultWin
+        Write-Host "Auto-detected packaged build: $GameSource" -ForegroundColor DarkGray
+    } elseif (Test-Path (Join-Path $defaultNoEd "MyProject.exe")) {
+        $GameSource = $defaultNoEd
+        Write-Host "Auto-detected packaged build: $GameSource" -ForegroundColor DarkGray
+    }
+}
+
+if (-not $GameSource) {
     Write-Host @"
 Packaged game folder not set (Windows folder with MyProject.exe).
 

@@ -16,6 +16,7 @@ public:
 	static USoundBase* GetPickupSound();
 	static USoundBase* GetChaseStartSound();
 	static USoundBase* GetEnemyGruntSound();
+	static USoundBase* GetPlayerDeathSound();
 
 	static void AssignIfNull(TObjectPtr<USoundBase>& Slot, USoundBase* Fallback);
 };

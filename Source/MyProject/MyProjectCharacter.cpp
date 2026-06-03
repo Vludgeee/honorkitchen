@@ -132,10 +132,15 @@ float AMyProjectCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Da
 		DamageHudLastAmount = ActualDamage;
 		DamageHudExpiresTime = W->GetTimeSeconds() + 1.35;
 	}
-	PlayDamageFeedback(ActualDamage);
-	if (CurrentHealth <= 0.f)
+	const bool bLethal = CurrentHealth <= 0.f;
+	if (bLethal)
 	{
+		PlayLethalDamagePresentation();
 		HandleDeath();
+	}
+	else
+	{
+		PlayDamageFeedback(ActualDamage);
 	}
 	return ActualDamage;
 }
@@ -153,6 +158,10 @@ ADynamicPostProcess* AMyProjectCharacter::ResolvePostProcessActor()
 
 float AMyProjectCharacter::GetDamageScreenFlashAlpha() const
 {
+	if (bDeathVignetteHeld)
+	{
+		return 1.f;
+	}
 	const UWorld* W = GetWorld();
 	if (!W || DamageScreenFlashEndTime <= 0.0)
 	{
@@ -173,14 +182,37 @@ void AMyProjectCharacter::PlayDamageFeedback(float DamageAmount)
 	{
 		DamageScreenFlashEndTime = W->GetTimeSeconds() + 0.35f;
 	}
-	USoundBase* const S = DamageTakenSound ? DamageTakenSound.Get() : HonorKitchenAudioDefaults::GetDamageTakenSound();
-	if (S)
+	// Удар слышен через HonorKitchenEnemySoundCatalog (Punch); отдельный звук — только если задан в Details.
+	if (DamageTakenSound)
 	{
-		UGameplayStatics::PlaySound2D(this, S, HonorKitchenAudioSettings::ScaleVolume(0.85f));
+		UGameplayStatics::PlaySound2D(this, DamageTakenSound, HonorKitchenAudioSettings::ScaleVolume(0.85f));
 	}
 	if (ADynamicPostProcess* PP = ResolvePostProcessActor())
 	{
 		PP->PlayDamagePulse(DamageVignettePulseStrength);
+	}
+}
+
+void AMyProjectCharacter::PlayLethalDamagePresentation()
+{
+	bDeathVignetteHeld = true;
+	if (UWorld* W = GetWorld())
+	{
+		DamageScreenFlashEndTime = W->GetTimeSeconds() + 99999.0;
+	}
+	if (ADynamicPostProcess* PP = ResolvePostProcessActor())
+	{
+		PP->HoldDamagePulseAtPeak(DamageVignettePulseStrength);
+	}
+}
+
+void AMyProjectCharacter::ClearDeathVignetteHold()
+{
+	bDeathVignetteHeld = false;
+	DamageScreenFlashEndTime = 0.0;
+	if (ADynamicPostProcess* PP = ResolvePostProcessActor())
+	{
+		PP->ReleaseDamagePulseHold();
 	}
 }
 
@@ -377,7 +409,7 @@ bool AMyProjectCharacter::TryPickupNearbyItem()
 	APickupBase* Best = nullptr;
 	float BestDistSq = FLT_MAX;
 	const FVector Origin = GetActorLocation();
-	const float MaxDistSq = FMath::Square(320.f);
+	const float MaxDistSq = FMath::Square(960.f);
 	float NearestAnyDistSq = FLT_MAX;
 	int32 ScannedCount = 0;
 	for (TActorIterator<APickupBase> It(GetWorld()); It; ++It)
@@ -673,12 +705,29 @@ void AMyProjectCharacter::HandleDeath()
 	UGameplayStatics::OpenLevel(this, FName(*LevelName));
 }
 
+namespace
+{
+	bool IsLegacyTemplateHitSound(const USoundBase* Sound)
+	{
+		if (!Sound)
+		{
+			return false;
+		}
+		const FString Path = Sound->GetPathName();
+		return Path.Contains(TEXT("FirstPersonTemplateWeaponFire"), ESearchCase::IgnoreCase)
+			|| Path.Contains(TEXT("/Engine/EditorSounds/"), ESearchCase::IgnoreCase);
+	}
+}
+
 void AMyProjectCharacter::BeginPlay()
 {
 	// Call the base class  
 	Super::BeginPlay();
 
-	HonorKitchenAudioDefaults::AssignIfNull(DamageTakenSound, HonorKitchenAudioDefaults::GetDamageTakenSound());
+	if (IsLegacyTemplateHitSound(DamageTakenSound.Get()))
+	{
+		DamageTakenSound = nullptr;
+	}
 
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
 	{

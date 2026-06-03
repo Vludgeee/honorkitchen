@@ -175,6 +175,19 @@ void AVilokhvostCharacter::ApplyForkDamage(AMyProjectCharacter* Player)
 	}
 }
 
+float AVilokhvostCharacter::GetAtmosphereThreatWeight() const
+{
+	switch (State)
+	{
+	case EVilokhvostState::AttackLunge:
+		return 0.92f;
+	case EVilokhvostState::ReturningHome:
+		return 0.38f;
+	default:
+		return 0.f;
+	}
+}
+
 void AVilokhvostCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);

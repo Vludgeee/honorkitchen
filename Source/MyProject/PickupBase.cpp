@@ -58,7 +58,7 @@ APickupBase::APickupBase()
 	if (SphereMesh.Succeeded())
 	{
 		PickupVisual->SetStaticMesh(SphereMesh.Object);
-		PickupVisual->SetRelativeScale3D(FVector(0.5f, 0.5f, 0.35f));
+		PickupVisual->SetRelativeScale3D(FVector(1.5f, 1.5f, 1.05f));
 		if (ShapeMaterial.Succeeded())
 		{
 			PickupVisual->SetMaterial(0, ShapeMaterial.Object);

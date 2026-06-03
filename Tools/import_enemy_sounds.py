@@ -163,6 +163,12 @@ def import_wav(wav_path: str, dest_path: str, asset_name: str, b_loop: bool) -> 
 	asset = unreal.load_asset(full_asset)
 	if is_valid_sound_wave(asset):
 		asset.set_editor_property("looping", b_loop)
+		# 3D в мире (затухание задаётся в HonorKitchenMonsterAudio при воспроизведении).
+		try:
+			asset.set_editor_property("is_ui_sound", False)
+			asset.set_editor_property("override_attenuation", False)
+		except Exception:
+			pass
 		unreal.EditorAssetLibrary.save_loaded_asset(asset)
 		dur = asset.get_editor_property("duration")
 		unreal.log(f"OK {full_asset} loop={b_loop} dur={dur:.2f}s")
@@ -204,6 +210,19 @@ def main():
 			ok += 1
 
 	unreal.log(f"Enemy sounds import finished: {ok}/{len(IMPORTS)}")
+
+	player_wav = os.path.join(SOURCE_DIR, "Death_Master.wav")
+	player_disk = os.path.join(PROJECT_ROOT, "Content", "Audio", "Player")
+	player_dest_ue = "/Game/Audio/Player"
+	if os.path.isfile(player_wav):
+		os.makedirs(player_disk, exist_ok=True)
+		shutil.copy2(player_wav, os.path.join(player_disk, "Death_Master.wav"))
+		if import_wav(os.path.join(player_disk, "Death_Master.wav"), player_dest_ue, "Death_Master", False):
+			unreal.log("OK player death sound Death_Master")
+		else:
+			unreal.log_error("FAIL player death sound Death_Master")
+	else:
+		unreal.log_error(f"Missing Death_Master.wav in {SOURCE_DIR}")
 
 
 if __name__ == "__main__":

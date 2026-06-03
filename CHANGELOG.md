@@ -4,6 +4,16 @@
 
 ## [В разработке]
 
+### 28-05-2026 — установщик 0.3.0
+
+#### Добавлено
+- `Tools\BuildHonorKitchenInstaller.ps1` — сборка установщика; `-PackageFirst` для полного цикла с упаковкой UE.
+- Авто-поиск `Build\Packaged\Windows` или `WindowsNoEditor` в `BuildInstaller.ps1` и в `InnoSetup_MyProject_Demo.iss`.
+
+#### Изменено
+- Версия демо-установщика: **0.3.0**, имя приложения **HonorKitchen** (`Dist\HonorKitchen_Demo_Setup_0.3.0.exe`).
+- `PackageWindowsShipping.ps1 -BuildInstaller` передаёт путь к только что упакованной папке.
+
 ### 09-05-2026 — план (День 3: враги / застревания) и документация
 
 #### Добавлено

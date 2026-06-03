@@ -29,12 +29,25 @@ void ADynamicPostProcess::PlayDamagePulse(float Strength01)
 	PushSettingsToVolume();
 }
 
+void ADynamicPostProcess::HoldDamagePulseAtPeak(float Strength01)
+{
+	bHoldDamagePulse = true;
+	CurrentDamagePulse = FMath::Max(CurrentDamagePulse, FMath::Clamp(Strength01, 0.f, 1.5f));
+	PushSettingsToVolume();
+}
+
+void ADynamicPostProcess::ReleaseDamagePulseHold()
+{
+	bHoldDamagePulse = false;
+	PushSettingsToVolume();
+}
+
 void ADynamicPostProcess::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
 	bool bNeedsPush = false;
-	if (CurrentDamagePulse > KINDA_SMALL_NUMBER)
+	if (!bHoldDamagePulse && CurrentDamagePulse > KINDA_SMALL_NUMBER)
 	{
 		const float Prev = CurrentDamagePulse;
 		CurrentDamagePulse = FMath::Max(0.f, CurrentDamagePulse - (DeltaSeconds / FMath::Max(0.05f, DamagePulseDecaySeconds)));

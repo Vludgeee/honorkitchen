@@ -2,6 +2,7 @@
 
 #include "HonorKitchenEnemyIdleAudioComponent.h"
 #include "HonorKitchenAudioSettings.h"
+#include "HonorKitchenMonsterAudio.h"
 #include "KaravaychikCharacter.h"
 #include "TomatoSaurusAIController.h"
 #include "TomatoSaurusCharacter.h"
@@ -39,6 +40,7 @@ void UHonorKitchenEnemyIdleAudioComponent::BeginPlay()
 	IdleAudioComponent->bAutoDestroy = false;
 	IdleAudioComponent->bAllowSpatialization = true;
 	IdleAudioComponent->bIsUISound = false;
+	HonorKitchenMonsterAudio::ConfigureSpatialAudio(IdleAudioComponent);
 	IdleAudioComponent->SetupAttachment(Owner->GetRootComponent());
 	IdleAudioComponent->RegisterComponent();
 }
@@ -123,19 +125,50 @@ void UHonorKitchenEnemyIdleAudioComponent::StartIdleLoop()
 		return;
 	}
 
+	bIdleStopFadePending = false;
+	IdleAudioComponent->OnAudioFinished.Clear();
+
+	HonorKitchenMonsterAudio::ConfigureSpatialAudio(IdleAudioComponent);
 	IdleAudioComponent->SetSound(Sound);
-	IdleAudioComponent->SetVolumeMultiplier(HonorKitchenAudioSettings::ScaleMonsterVolume(IdleVolume));
-	IdleAudioComponent->Play();
+	const float ScaledVolume = HonorKitchenAudioSettings::ScaleMonsterVolume(IdleVolume);
+	IdleAudioComponent->SetVolumeMultiplier(ScaledVolume);
+	IdleAudioComponent->Activate();
+	if (!IdleAudioComponent->IsPlaying())
+	{
+		IdleAudioComponent->Play();
+	}
 	bWasPlayingIdle = true;
 }
 
 void UHonorKitchenEnemyIdleAudioComponent::StopIdleLoop()
 {
-	if (IdleAudioComponent && IdleAudioComponent->IsPlaying())
+	if (!IdleAudioComponent || !IdleAudioComponent->IsPlaying())
 	{
+		bWasPlayingIdle = false;
+		bIdleStopFadePending = false;
+		return;
+	}
+
+	if (bIdleStopFadePending)
+	{
+		return;
+	}
+
+	bIdleStopFadePending = true;
+	IdleAudioComponent->OnAudioFinished.Clear();
+	IdleAudioComponent->OnAudioFinished.AddUniqueDynamic(this, &UHonorKitchenEnemyIdleAudioComponent::OnIdleLoopFadeOutFinished);
+	IdleAudioComponent->FadeOut(HonorKitchenMonsterAudio::FadeOutSeconds, 0.f);
+}
+
+void UHonorKitchenEnemyIdleAudioComponent::OnIdleLoopFadeOutFinished()
+{
+	bWasPlayingIdle = false;
+	bIdleStopFadePending = false;
+	if (IdleAudioComponent)
+	{
+		IdleAudioComponent->OnAudioFinished.RemoveDynamic(this, &UHonorKitchenEnemyIdleAudioComponent::OnIdleLoopFadeOutFinished);
 		IdleAudioComponent->Stop();
 	}
-	bWasPlayingIdle = false;
 }
 
 void UHonorKitchenEnemyIdleAudioComponent::RefreshIdlePlayback()
@@ -143,6 +176,15 @@ void UHonorKitchenEnemyIdleAudioComponent::RefreshIdlePlayback()
 	float DistSq = 0.f;
 	const bool bInRange = IsPlayerInAudibleRange(DistSq);
 	const bool bCalm = IsOwnerCalm();
+	if (HonorKitchenAudioSettings::IsDeathStingActive())
+	{
+		if (bWasPlayingIdle)
+		{
+			StopIdleLoop();
+		}
+		return;
+	}
+
 	const bool bShouldPlay = bInRange && bCalm && HonorKitchenAudioSettings::IsSoundEnabled();
 
 	if (bShouldPlay)

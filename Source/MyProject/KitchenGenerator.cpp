@@ -10,6 +10,8 @@
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/Light.h"
+#include "Engine/PointLight.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/PostProcessVolume.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Engine/SkyLight.h"
@@ -1684,6 +1686,174 @@ void AKitchenGenerator::SpawnTomatoesFromPoints()
 	DebugPrintGenerationSummary(true);
 }
 
+void AKitchenGenerator::CollectRoomLightCells(int32 RoomIdx, TArray<FIntPoint>& OutCells) const
+{
+	OutCells.Reset();
+	if (!RoomCellMins.IsValidIndex(RoomIdx) || !RoomCellMaxs.IsValidIndex(RoomIdx))
+	{
+		return;
+	}
+
+	const FIntPoint Min = RoomCellMins[RoomIdx];
+	const FIntPoint Max = RoomCellMaxs[RoomIdx];
+	const int32 Margin = 1;
+	for (int32 Y = Min.Y + Margin; Y <= Max.Y - Margin; ++Y)
+	{
+		for (int32 X = Min.X + Margin; X <= Max.X - Margin; ++X)
+		{
+			const FIntPoint C(X, Y);
+			if (IsCellRoom(C))
+			{
+				OutCells.Add(C);
+			}
+		}
+	}
+}
+
+FVector AKitchenGenerator::MakeRoomCeilingLightLocation(FIntPoint Cell, FRandomStream& Rng) const
+{
+	FVector Loc = CellCenterWorld(Cell);
+	Loc.Z += WallHeightUU * 0.82f;
+	const float Jitter = CellSizeUU * 0.32f;
+	Loc.X += Rng.FRandRange(-Jitter, Jitter);
+	Loc.Y += Rng.FRandRange(-Jitter, Jitter);
+	return Loc;
+}
+
+bool AKitchenGenerator::TryPickRoomLightLocation(
+	int32 RoomIdx,
+	FRandomStream& Rng,
+	const TArray<FVector>& ExistingInRoom,
+	float MinSeparationUU,
+	FVector& OutWorld) const
+{
+	TArray<FIntPoint> Cells;
+	CollectRoomLightCells(RoomIdx, Cells);
+	if (Cells.Num() == 0)
+	{
+		return false;
+	}
+
+	const float MinSepSq = MinSeparationUU * MinSeparationUU;
+	const int32 MaxTries = FMath::Min(48, Cells.Num() * 6);
+	for (int32 Try = 0; Try < MaxTries; ++Try)
+	{
+		const FIntPoint Cell = Cells[Rng.RandRange(0, Cells.Num() - 1)];
+		const FVector Candidate = MakeRoomCeilingLightLocation(Cell, Rng);
+
+		bool bTooClose = false;
+		for (const FVector& Existing : ExistingInRoom)
+		{
+			if (FVector::DistSquared2D(Candidate, Existing) < MinSepSq)
+			{
+				bTooClose = true;
+				break;
+			}
+		}
+		if (!bTooClose)
+		{
+			OutWorld = Candidate;
+			return true;
+		}
+	}
+	return false;
+}
+
+void AKitchenGenerator::SpawnRoomPointLightAt(const FVector& WorldLoc, bool bPortalRoom)
+{
+	UWorld* W = GetWorld();
+	if (!W)
+	{
+		return;
+	}
+
+	FActorSpawnParameters Sp;
+	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	APointLight* Light = W->SpawnActor<APointLight>(WorldLoc, FRotator::ZeroRotator, Sp);
+	if (!Light)
+	{
+		return;
+	}
+
+	if (UPointLightComponent* LC = Light->PointLightComponent)
+	{
+		LC->SetMobility(EComponentMobility::Movable);
+		LC->SetIntensity(bPortalRoom ? PortalRoomLightIntensity : RoomLightIntensity);
+		LC->SetLightColor(bPortalRoom ? PortalRoomLightColor : RoomLightColor);
+		LC->SetAttenuationRadius(CellSizeUU * RoomLightAttenuationCells);
+		LC->SetCastShadows(true);
+	}
+
+	RegisterGenerated(Light);
+}
+
+void AKitchenGenerator::SpawnRoomAtmosphereLights(FRandomStream& Rand)
+{
+	if (!bSpawnRoomAtmosphereLights || RoomCenters.Num() == 0)
+	{
+		return;
+	}
+
+	const int32 StartRoomIdx = 0;
+	TArray<int32> DarkCandidates;
+	DarkCandidates.Reserve(RoomCenters.Num());
+	for (int32 RoomIdx = 0; RoomIdx < RoomCenters.Num(); ++RoomIdx)
+	{
+		if (RoomIdx == PortalRoomGraphIndex || RoomIdx == StartRoomIdx)
+		{
+			continue;
+		}
+		DarkCandidates.Add(RoomIdx);
+	}
+
+	const int32 DarkCount = FMath::Clamp(DarkRoomsPerRun, 0, DarkCandidates.Num());
+	for (int32 I = DarkCandidates.Num() - 1; I > 0; --I)
+	{
+		const int32 SwapIdx = Rand.RandRange(0, I);
+		DarkCandidates.Swap(I, SwapIdx);
+	}
+
+	TSet<int32> DarkRoomIndices;
+	for (int32 I = 0; I < DarkCount; ++I)
+	{
+		DarkRoomIndices.Add(DarkCandidates[I]);
+	}
+
+	for (int32 RoomIdx = 0; RoomIdx < RoomCenters.Num(); ++RoomIdx)
+	{
+		if (DarkRoomIndices.Contains(RoomIdx))
+		{
+			continue;
+		}
+
+		const bool bPortalRoom = (RoomIdx == PortalRoomGraphIndex);
+		const int32 LightCount = Rand.FRand() < 0.42f ? 2 : 1;
+
+		float MinSepUU = CellSizeUU * 2.5f;
+		if (RoomCellMins.IsValidIndex(RoomIdx) && RoomCellMaxs.IsValidIndex(RoomIdx))
+		{
+			const FIntPoint& RMin = RoomCellMins[RoomIdx];
+			const FIntPoint& RMax = RoomCellMaxs[RoomIdx];
+			const float SpanX = static_cast<float>(RMax.X - RMin.X + 1) * CellSizeUU;
+			const float SpanY = static_cast<float>(RMax.Y - RMin.Y + 1) * CellSizeUU;
+			MinSepUU = FMath::Max(MinSepUU, FMath::Min(SpanX, SpanY) * 0.42f);
+		}
+
+		TArray<FVector> PlacedInRoom;
+		for (int32 L = 0; L < LightCount; ++L)
+		{
+			const float Sep = (L == 0) ? 0.f : MinSepUU;
+			FVector Loc;
+			if (!TryPickRoomLightLocation(RoomIdx, Rand, PlacedInRoom, Sep, Loc))
+			{
+				break;
+			}
+			PlacedInRoom.Add(Loc);
+			SpawnRoomPointLightAt(Loc, bPortalRoom);
+		}
+	}
+}
+
 void AKitchenGenerator::Regenerate(int32 Seed, int32 NumBatteries)
 {
 	UWorld* W = GetWorld();
@@ -1801,6 +1971,7 @@ void AKitchenGenerator::Regenerate(int32 Seed, int32 NumBatteries)
 			FString::Printf(TEXT("Rooms=%d Batteries=%d"), RoomCenters.Num(), BatteryCells.Num()));
 		SpawnFloorTiles();
 		SpawnFurniture(FurnitureRand);
+		SpawnRoomAtmosphereLights(FurnitureRand);
 		SpawnPortalPickupsAndExtras(LootRand);
 		BuildEnemySpawnPoints(EnemyRand);
 

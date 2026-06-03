@@ -32,4 +32,8 @@ public:
 
 	/** Сбросить отладочные оверлеи у всех локальных игроков (навигатор, телеметрия HUD). */
 	static void EnforceDeveloperModeRuntime(UWorld* World);
+
+	/** Пока идёт death-sting: только звук смерти, без музыки/монстров. */
+	static bool IsDeathStingActive();
+	static void SetDeathStingActive(bool bActive);
 };

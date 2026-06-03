@@ -41,4 +41,9 @@ private:
 	void RefreshIdlePlayback();
 	void StartIdleLoop();
 	void StopIdleLoop();
+
+	UFUNCTION()
+	void OnIdleLoopFadeOutFinished();
+
+	bool bIdleStopFadePending = false;
 };

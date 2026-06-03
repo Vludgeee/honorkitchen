@@ -8,10 +8,9 @@
 AMedkitPickup::AMedkitPickup()
 {
 	ConfigurePickup(EInventoryItemType::Medkit, 1);
-	PickupSphereRadius = 48.f;
 	if (PickupVisual)
 	{
-		PickupVisual->SetRelativeScale3D(FVector(0.6f, 0.45f, 0.35f));
+		PickupVisual->SetRelativeScale3D(FVector(1.8f, 1.35f, 1.05f));
 	}
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Mat(TEXT("/Game/Materials/M_Medkit.M_Medkit"));
 	if (Mat.Succeeded())

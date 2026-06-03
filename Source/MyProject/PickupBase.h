@@ -95,7 +95,7 @@ protected:
 
 	/** Радиус сферы подбора (визуал/позиция). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pickup", meta = (ClampMin = "10.0"))
-	float PickupSphereRadius = 48.f;
+	float PickupSphereRadius = 144.f;
 
 	/** Применить цвет/стиль меша (переопределяется в наследниках). */
 	virtual void ApplyDefaultVisual();

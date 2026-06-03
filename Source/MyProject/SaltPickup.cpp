@@ -8,10 +8,9 @@
 ASaltPickup::ASaltPickup()
 {
 	ConfigurePickup(EInventoryItemType::Salt, 1);
-	PickupSphereRadius = 48.f;
 	if (PickupVisual)
 	{
-		PickupVisual->SetRelativeScale3D(FVector(0.55f, 0.55f, 0.35f));
+		PickupVisual->SetRelativeScale3D(FVector(1.65f, 1.65f, 1.05f));
 	}
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Mat(TEXT("/Game/Materials/M_Salt.M_Salt"));
 	if (Mat.Succeeded())

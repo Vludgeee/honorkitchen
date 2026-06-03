@@ -23,8 +23,8 @@ public:
 	UHonorKitchenPickupBillboardComponent();
 
 	/** Размер по большей стороне текстуры в uu. */
-	UPROPERTY(EditAnywhere, Category = "Pickup Sprite", meta = (ClampMin = "16.0", ClampMax = "512.0"))
-	float SpriteWorldSizeUU = 76.f;
+	UPROPERTY(EditAnywhere, Category = "Pickup Sprite", meta = (ClampMin = "16.0", ClampMax = "1536.0"))
+	float SpriteWorldSizeUU = 228.f;
 
 	bool ActivateSpriteIfAvailable(EInventoryItemType Type);
 

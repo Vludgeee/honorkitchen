@@ -47,6 +47,11 @@ public:
 	void ToggleDebugTelemetry();
 	void ForceDebugTelemetryOff();
 
+	/** Пульс тёмной рамки при высокой угрозе (0..1), задаётся из PlayerController. */
+	void SetThreatScreenPulseAlpha(float Alpha);
+
 protected:
+	float ThreatScreenPulseAlpha = 0.f;
+
 	virtual void DrawHUD() override;
 };

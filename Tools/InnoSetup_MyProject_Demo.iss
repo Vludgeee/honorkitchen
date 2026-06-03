@@ -8,11 +8,17 @@
 ;   - при сборке ТОЛЬКО из GUI Inno без /D — ниже путь по умолчанию ОТНОСИТЕЛЬНО этого .iss (папка Tools\).
 
 #ifndef GameSourceDir
+#if FileExists("..\Build\Packaged\Windows\MyProject.exe")
+#define GameSourceDir "..\Build\Packaged\Windows\*"
+#elif FileExists("..\Build\Packaged\WindowsNoEditor\MyProject.exe")
 #define GameSourceDir "..\Build\Packaged\WindowsNoEditor\*"
+#else
+#define GameSourceDir "..\Build\Packaged\Windows\*"
+#endif
 #endif
 
-#define MyAppName "HonorKitchen Demo"
-#define MyAppVersion "0.2.2"
+#define MyAppName "HonorKitchen"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "(ФИО / группа — подставь)"
 #define MyAppExeName "MyProject.exe"
 

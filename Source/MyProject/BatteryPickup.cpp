@@ -8,10 +8,9 @@
 ABatteryPickup::ABatteryPickup()
 {
 	ConfigurePickup(EInventoryItemType::Battery, 1);
-	PickupSphereRadius = 48.f;
 	if (PickupVisual)
 	{
-		PickupVisual->SetRelativeScale3D(FVector(0.55f, 0.55f, 0.45f));
+		PickupVisual->SetRelativeScale3D(FVector(1.65f, 1.65f, 1.35f));
 	}
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Mat(TEXT("/Game/Materials/M_Battery.M_Battery"));
 	if (Mat.Succeeded())

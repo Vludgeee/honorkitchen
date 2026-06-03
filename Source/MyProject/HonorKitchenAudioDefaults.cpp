@@ -24,6 +24,7 @@ namespace HonorKitchenAudioDefaultsPrivate
 	static USoundBase* CachedPickup = nullptr;
 	static USoundBase* CachedChase = nullptr;
 	static USoundBase* CachedGrunt = nullptr;
+	static USoundBase* CachedPlayerDeath = nullptr;
 }
 
 USoundBase* HonorKitchenAudioDefaults::GetDamageTakenSound()
@@ -31,13 +32,10 @@ USoundBase* HonorKitchenAudioDefaults::GetDamageTakenSound()
 	using namespace HonorKitchenAudioDefaultsPrivate;
 	if (!CachedDamage)
 	{
+		// Только явные звуки игрока — без fallback на First Person / Engine (дублировал удар врага).
 		CachedDamage = LoadFirstSound({
-			TEXT("/Game/FirstPerson/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02"),
-			TEXT("/Game/FPWeapon/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02"),
-			TEXT("/Game/FirstPerson/Audio/FirstPersonTemplateWeaponFire01.FirstPersonTemplateWeaponFire01"),
-			TEXT("/Game/FPWeapon/Audio/FirstPersonTemplateWeaponFire01.FirstPersonTemplateWeaponFire01"),
-			TEXT("/Engine/EditorSounds/Notifications/Alert.Alert"),
-			TEXT("/Engine/EditorSounds/Notifications/CompileFailed.CompileFailed"),
+			TEXT("/Game/Audio/Player/Hurt_Master.Hurt_Master"),
+			TEXT("/Game/Audio/Player/DamageTaken_Master.DamageTaken_Master"),
 		});
 	}
 	return CachedDamage;
@@ -108,6 +106,18 @@ USoundBase* HonorKitchenAudioDefaults::GetEnemyGruntSound()
 		CachedGrunt = GetChaseStartSound();
 	}
 	return CachedGrunt;
+}
+
+USoundBase* HonorKitchenAudioDefaults::GetPlayerDeathSound()
+{
+	using namespace HonorKitchenAudioDefaultsPrivate;
+	if (!CachedPlayerDeath)
+	{
+		CachedPlayerDeath = LoadFirstSound({
+			TEXT("/Game/Audio/Player/Death_Master.Death_Master"),
+		});
+	}
+	return CachedPlayerDeath;
 }
 
 void HonorKitchenAudioDefaults::AssignIfNull(TObjectPtr<USoundBase>& Slot, USoundBase* Fallback)

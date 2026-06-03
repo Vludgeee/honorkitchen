@@ -2,9 +2,11 @@
 
 #include "HonorKitchenEnemySoundCatalog.h"
 #include "HonorKitchenAudioSettings.h"
-#include "Kismet/GameplayStatics.h"
+#include "HonorKitchenMonsterAudio.h"
 #include "Sound/SoundBase.h"
 #include "UObject/UObjectGlobals.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogHonorKitchenEnemyAudio, Log, All);
 
 namespace HonorKitchenEnemySoundCatalogPrivate
 {
@@ -13,7 +15,12 @@ namespace HonorKitchenEnemySoundCatalogPrivate
 
 	static USoundBase* LoadSound(const TCHAR* AssetPath)
 	{
-		return LoadObject<USoundBase>(nullptr, AssetPath);
+		USoundBase* const Sound = LoadObject<USoundBase>(nullptr, AssetPath);
+		if (!IsValid(Sound))
+		{
+			UE_LOG(LogHonorKitchenEnemyAudio, Verbose, TEXT("Enemy sound missing: %s"), AssetPath);
+		}
+		return Sound;
 	}
 
 	static void LoadGroup(const TArray<const TCHAR*>& Paths)
@@ -21,7 +28,7 @@ namespace HonorKitchenEnemySoundCatalogPrivate
 		LoadedGroup.Reset();
 		for (const TCHAR* Path : Paths)
 		{
-			if (USoundBase* S = LoadSound(Path))
+			if (USoundBase* S = LoadSound(Path); IsValid(S))
 			{
 				LoadedGroup.Add(S);
 			}
@@ -33,6 +40,11 @@ namespace HonorKitchenEnemySoundCatalogPrivate
 		LoadGroup(Paths);
 		if (LoadedGroup.Num() == 0)
 		{
+			UE_LOG(
+				LogHonorKitchenEnemyAudio,
+				Warning,
+				TEXT("No enemy sounds loaded for this event (%d paths). Run Tools/import_enemy_sounds.py in the editor."),
+				Paths.Num());
 			return nullptr;
 		}
 		const int32 Idx = FMath::RandRange(0, LoadedGroup.Num() - 1);
@@ -141,20 +153,15 @@ void HonorKitchenEnemySoundCatalog::PlayAt(
 	float VolumeMultiplier,
 	float PitchMultiplier)
 {
-	if (!WorldContext || !HonorKitchenAudioSettings::IsSoundEnabled())
+	if (!IsValid(WorldContext) || !HonorKitchenAudioSettings::IsSoundEnabled()
+		|| HonorKitchenAudioSettings::IsDeathStingActive())
 	{
 		return;
 	}
 
-	if (USoundBase* S = PickSound(Species, Event))
+	if (USoundBase* S = PickSound(Species, Event); IsValid(S))
 	{
-		UGameplayStatics::PlaySoundAtLocation(
-			WorldContext,
-			S,
-			Location,
-			FRotator::ZeroRotator,
-			HonorKitchenAudioSettings::ScaleMonsterVolume(VolumeMultiplier),
-			PitchMultiplier);
+		HonorKitchenMonsterAudio::PlayOneShotAt(WorldContext, S, Location, VolumeMultiplier, PitchMultiplier);
 	}
 }
 

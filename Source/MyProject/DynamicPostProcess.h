@@ -24,6 +24,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PostProcess")
 	void PlayDamagePulse(float Strength01 = 0.85f);
 
+	/** Зафиксировать виньетку урона на пике (смерть), без затухания. */
+	void HoldDamagePulseAtPeak(float Strength01 = 0.85f);
+	void ReleaseDamagePulseHold();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -61,6 +65,7 @@ public:
 protected:
 	float CurrentThreatStress = 0.f;
 	float CurrentDamagePulse = 0.f;
+	bool bHoldDamagePulse = false;
 
 	void PushSettingsToVolume();
 };

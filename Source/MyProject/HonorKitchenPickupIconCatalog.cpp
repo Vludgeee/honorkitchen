@@ -16,6 +16,8 @@ const TCHAR* HonorKitchenPickupIconCatalog::AssetPathFor(EInventoryItemType Type
 		return TEXT("/Game/UI/PickupSprites/T_PickupSalt.T_PickupSalt");
 	case EInventoryItemType::Water:
 		return TEXT("/Game/UI/PickupSprites/T_PickupWater.T_PickupWater");
+	case EInventoryItemType::Medkit:
+		return TEXT("/Game/UI/PickupSprites/T_PickupMedkit.T_PickupMedkit");
 	default:
 		return nullptr;
 	}

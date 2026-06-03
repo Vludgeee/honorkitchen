@@ -32,6 +32,9 @@ public:
 
 	bool IsIdleHoveringForAmbientAudio() const { return State == EVilokhvostState::IdleHover; }
 
+	/** 0..1 для пост-процесса / HUD при угрозе от вилохвоста. */
+	float GetAtmosphereThreatWeight() const;
+
 protected:
 	enum class EVilokhvostState : uint8
 	{

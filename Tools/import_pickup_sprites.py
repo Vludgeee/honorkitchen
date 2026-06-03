@@ -12,12 +12,13 @@ SOURCE_DIRS = [
 DEST_DISK = os.path.join(PROJECT, "Content", "UI", "PickupSprites")
 DEST_UE = "/Game/UI/PickupSprites"
 
-# Имена файлов: Battery.png, Crumb.png, Salt.png, Water.png (регистр не важен)
+# Имена файлов: Battery.png, Crumb.png, Salt.png, Water.png, MedKit.png (регистр не важен)
 MAPPING = {
     "Battery.png": "T_PickupBattery",
     "Crumb.png": "T_PickupCrumb",
     "Salt.png": "T_PickupSalt",
     "Water.png": "T_PickupWater",
+    "MedKit.png": "T_PickupMedkit",
 }
 
 

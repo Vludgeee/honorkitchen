@@ -26,6 +26,7 @@
 #include "Engine/Engine.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "GameFramework/WorldSettings.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "HonorKitchenSaveGame.h"
@@ -39,7 +40,11 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/AudioComponent.h"
 #include "HonorKitchenAudioSettings.h"
+#include "HonorKitchenAtmosphereAudio.h"
+#include "HonorKitchenAudioDefaults.h"
 #include "HonorKitchenDevDebug.h"
+#include "UObject/UObjectIterator.h"
+#include "Containers/Ticker.h"
 #include "Sound/SoundBase.h"
 #include "Sound/SoundWave.h"
 
@@ -137,6 +142,9 @@ void AMyProjectGameMode::BeginPlay()
 
 void AMyProjectGameMode::BeginHiddenPreparation()
 {
+	StopKitchenReadyAtmosphere();
+	StopInRoundAtmosphereTimer();
+	StopRoundAmbientLoop();
 	bKitchenPrepComplete = false;
 	bPreRoundInputLocked = false;
 	PreRoundState = EPreRoundState::Preparing;
@@ -428,6 +436,7 @@ void AMyProjectGameMode::FinishGameplayBootstrap()
 	UE_LOG(LogTemp, Log, TEXT("[Prep] OK attempts=%d time=%.2fs"), LastPreparationAttempts, LastPreparationSeconds);
 	PreRoundState = EPreRoundState::ReadyToStart;
 	OnKitchenPreparationComplete();
+	RefreshKitchenReadyAtmosphere();
 }
 
 void AMyProjectGameMode::StartPreparedRound()
@@ -436,10 +445,12 @@ void AMyProjectGameMode::StartPreparedRound()
 	{
 		return;
 	}
+	StopKitchenReadyAtmosphere();
 	PreRoundState = EPreRoundState::InRound;
 	RoundStartTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	ApplyPreRoundPlayerLock(false);
 	ApplyPendingLoadedSaveToPlayer();
+	RefreshWorldTimeFreeze();
 	if (bUseKitchenGridGenerator && SpawnedKitchenGenerator)
 	{
 		TryKitchenFinalizeDeferred();
@@ -448,6 +459,9 @@ void AMyProjectGameMode::StartPreparedRound()
 	{
 		TryGenerateProceduralRoundDeferred();
 	}
+	StartRoundAmbientLoop();
+	StartInRoundAtmosphereTimer();
+	RefreshRoundAmbientPlayback();
 }
 
 void AMyProjectGameMode::HandlePreRoundEnterPressed()
@@ -464,6 +478,7 @@ void AMyProjectGameMode::HandlePreRoundEnterPressed()
 
 void AMyProjectGameMode::RequestNewRound()
 {
+	CancelDeathStingIfActive();
 	MinRequiredBatteries = FMath::Clamp(MinRequiredBatteries, 2, 3);
 	MaxRequiredBatteries = FMath::Clamp(MaxRequiredBatteries, 2, 3);
 	if (MinRequiredBatteries > MaxRequiredBatteries)
@@ -477,6 +492,7 @@ void AMyProjectGameMode::RequestNewRound()
 	}
 	bRoundWon = false;
 	bRoundLost = false;
+	bDeathStingActive = false;
 	CrumbsThrownCount = 0;
 	AIDetectionCount = 0;
 	GetWorldTimerManager().ClearTimer(RespawnTimerHandle);
@@ -506,6 +522,7 @@ void AMyProjectGameMode::RequestNewRound()
 
 			EnsurePlayerPawnReady(true);
 		}
+		RefreshWorldTimeFreeze();
 	}
 	BeginHiddenPreparation();
 }
@@ -1338,13 +1355,163 @@ void AMyProjectGameMode::SpawnKaravaychikIfConfigured()
 
 void AMyProjectGameMode::NotifyPlayerDied(APlayerController* PC)
 {
-	if (bRoundWon || bRoundLost || !PC || !GetWorld())
+	BeginPlayerDeathSting(PC);
+}
+
+void AMyProjectGameMode::StopGameplayAudioForDeathSting()
+{
+	UWorld* World = GetWorld();
+	if (!World)
 	{
 		return;
 	}
-	bRoundLost = true;
+
+	RefreshFrontEndMusic();
+
+	for (TObjectIterator<UAudioComponent> It; It; ++It)
+	{
+		UAudioComponent* const AC = *It;
+		if (!AC || !IsValid(AC) || AC == DeathStingAudioComponent || AC == RoundAmbientAudioComponent)
+		{
+			continue;
+		}
+		if (!AC->GetWorld() || AC->GetWorld() != World)
+		{
+			continue;
+		}
+		if (AC->IsPlaying())
+		{
+			AC->Stop();
+		}
+	}
+}
+
+void AMyProjectGameMode::BeginPlayerDeathSting(APlayerController* PC)
+{
+	if (bRoundWon || bRoundLost || bDeathStingActive || !PC || !GetWorld())
+	{
+		return;
+	}
+
+	StopInRoundAtmosphereTimer();
+	StopKitchenReadyAtmosphere();
+	RefreshRoundAmbientPlayback();
+	bDeathStingActive = true;
+	DeathStingRealtimeElapsed = 0.f;
+	DeathStingPlayerController = PC;
+	HonorKitchenAudioSettings::SetDeathStingActive(true);
+
 	PC->SetIgnoreMoveInput(true);
 	PC->SetIgnoreLookInput(true);
+	if (PC->IsPaused())
+	{
+		PC->SetPause(false);
+	}
+
+	RefreshWorldTimeFreeze();
+	StopGameplayAudioForDeathSting();
+
+	USoundBase* const DeathSound = HonorKitchenAudioDefaults::GetPlayerDeathSound();
+	if (!DeathSound)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Death sting: Death_Master missing — run Tools/import_enemy_sounds.py"));
+		FinishPlayerDeathSting();
+		return;
+	}
+
+	const float Volume = HonorKitchenAudioSettings::ScaleVolume(1.f);
+	DeathStingAudioComponent = UGameplayStatics::SpawnSound2D(
+		GetWorld(),
+		DeathSound,
+		Volume,
+		1.f,
+		0.f,
+		nullptr,
+		false,
+		false);
+	if (DeathStingAudioComponent)
+	{
+		DeathStingAudioComponent->bIsUISound = true;
+		DeathStingAudioComponent->bAutoDestroy = false;
+		DeathStingAudioComponent->OnAudioFinished.AddDynamic(this, &AMyProjectGameMode::OnDeathStingAudioFinished);
+		DeathStingAudioComponent->Play();
+	}
+
+	const float Duration = FMath::Max(0.1f, DeathSound->GetDuration());
+	if (DeathStingRealtimeTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(DeathStingRealtimeTickerHandle);
+		DeathStingRealtimeTickerHandle.Reset();
+	}
+	const float FallbackSeconds = Duration + 0.35f;
+	TWeakObjectPtr<AMyProjectGameMode> WeakThis(this);
+	DeathStingRealtimeTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateLambda([WeakThis, FallbackSeconds](float DeltaTime) -> bool
+		{
+			AMyProjectGameMode* GM = WeakThis.Get();
+			if (!GM || !GM->bDeathStingActive)
+			{
+				return false;
+			}
+			GM->DeathStingRealtimeElapsed += DeltaTime;
+			if (GM->DeathStingRealtimeElapsed >= FallbackSeconds)
+			{
+				GM->FinishPlayerDeathSting();
+				return false;
+			}
+			return true;
+		}));
+}
+
+void AMyProjectGameMode::OnDeathStingAudioFinished()
+{
+	FinishPlayerDeathSting();
+}
+
+void AMyProjectGameMode::FinishPlayerDeathSting()
+{
+	if (!bDeathStingActive)
+	{
+		return;
+	}
+
+	if (DeathStingRealtimeTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(DeathStingRealtimeTickerHandle);
+		DeathStingRealtimeTickerHandle.Reset();
+	}
+	DeathStingRealtimeElapsed = 0.f;
+
+	if (DeathStingAudioComponent && DeathStingAudioComponent->IsPlaying())
+	{
+		DeathStingAudioComponent->Stop();
+	}
+	DeathStingAudioComponent = nullptr;
+
+	HonorKitchenAudioSettings::SetDeathStingActive(false);
+	bDeathStingActive = false;
+	bRoundLost = true;
+
+	if (APlayerController* PC = DeathStingPlayerController.Get())
+	{
+		PC->SetIgnoreMoveInput(true);
+		PC->SetIgnoreLookInput(true);
+		if (AMyProjectCharacter* Char = PC->GetPawn<AMyProjectCharacter>())
+		{
+			Char->ClearDeathVignetteHold();
+		}
+	}
+	DeathStingPlayerController = nullptr;
+	RefreshWorldTimeFreeze();
+}
+
+void AMyProjectGameMode::CancelDeathStingIfActive()
+{
+	if (!bDeathStingActive)
+	{
+		return;
+	}
+	FinishPlayerDeathSting();
 }
 
 void AMyProjectGameMode::NotifyCrumbThrown()
@@ -1381,13 +1548,75 @@ bool AMyProjectGameMode::TryActivatePortal(APlayerController* PC)
 		return false;
 	}
 	bRoundWon = true;
+	StopInRoundAtmosphereTimer();
+	RefreshRoundAmbientPlayback();
 	if (APawn* Pawn = PC->GetPawn())
 	{
 		Pawn->DisableInput(PC);
 	}
 	PC->SetIgnoreMoveInput(true);
 	PC->SetIgnoreLookInput(true);
+	RefreshWorldTimeFreeze();
 	return true;
+}
+
+bool AMyProjectGameMode::IsLocalGameplayPaused() const
+{
+	if (const UWorld* W = GetWorld())
+	{
+		if (const APlayerController* PC = W->GetFirstPlayerController())
+		{
+			return PC->IsPaused();
+		}
+	}
+	return false;
+}
+
+bool AMyProjectGameMode::ShouldFreezeWorld() const
+{
+	if (PreRoundState != EPreRoundState::InRound)
+	{
+		return false;
+	}
+	if (bDeathStingActive || bRoundWon || bRoundLost)
+	{
+		return true;
+	}
+	return IsLocalGameplayPaused();
+}
+
+void AMyProjectGameMode::RefreshWorldTimeFreeze()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const bool bWantFreeze = ShouldFreezeWorld();
+	if (bWantFreeze)
+	{
+		if (!bWorldFrozenForMenus)
+		{
+			const AWorldSettings* WS = World->GetWorldSettings();
+			SavedTimeDilationBeforeWorldFreeze = WS ? WS->TimeDilation : 1.f;
+			if (SavedTimeDilationBeforeWorldFreeze <= KINDA_SMALL_NUMBER)
+			{
+				SavedTimeDilationBeforeWorldFreeze = 1.f;
+			}
+			UGameplayStatics::SetGlobalTimeDilation(World, 0.f);
+			bWorldFrozenForMenus = true;
+		}
+	}
+	else if (bWorldFrozenForMenus)
+	{
+		const float Restore = FMath::Max(SavedTimeDilationBeforeWorldFreeze, 1.f);
+		UGameplayStatics::SetGlobalTimeDilation(World, Restore);
+		bWorldFrozenForMenus = false;
+		SavedTimeDilationBeforeWorldFreeze = 1.f;
+	}
+
+	RefreshRoundAmbientPlayback();
 }
 
 float AMyProjectGameMode::GetRoundElapsedSeconds() const
@@ -1406,6 +1635,8 @@ bool AMyProjectGameMode::HasSaveGameOnDisk() const
 
 void AMyProjectGameMode::StartNewGameFromMenu()
 {
+	StopKitchenReadyAtmosphere();
+	StopRoundAmbientLoop();
 	FrontEndScreen = EFrontEndScreen::None;
 	bPendingApplyLoadedSave = false;
 	bPendingApplyWorldSnapshot = false;
@@ -1420,6 +1651,8 @@ void AMyProjectGameMode::StartNewGameFromMenu()
 
 void AMyProjectGameMode::LoadGameFromMenu()
 {
+	StopKitchenReadyAtmosphere();
+	StopRoundAmbientLoop();
 	if (!HasSaveGameOnDisk())
 	{
 		return;
@@ -1516,6 +1749,8 @@ void AMyProjectGameMode::OnPlayerSettingsChanged()
 	{
 		RefreshFrontEndMusic();
 	}
+	RefreshKitchenReadyAtmosphere();
+	RefreshRoundAmbientPlayback();
 	HonorKitchenAudioSettings::EnforceDeveloperModeRuntime(GetWorld());
 }
 
@@ -1641,6 +1876,292 @@ void AMyProjectGameMode::RefreshFrontEndMusic()
 	}
 }
 
+namespace HonorKitchenAtmosphereAudioPrivate
+{
+	static void StopComponent(TObjectPtr<UAudioComponent>& Component)
+	{
+		if (!Component)
+		{
+			return;
+		}
+		Component->Stop();
+		Component->DestroyComponent();
+		Component = nullptr;
+	}
+}
+
+bool AMyProjectGameMode::CanPlayInRoundAtmosphere() const
+{
+	if (!HonorKitchenAudioSettings::IsSoundEnabled() || HonorKitchenAudioSettings::IsDeathStingActive())
+	{
+		return false;
+	}
+	if (PreRoundState != EPreRoundState::InRound || bRoundWon || bRoundLost)
+	{
+		return false;
+	}
+	return !IsLocalGameplayPaused();
+}
+
+void AMyProjectGameMode::StopKitchenReadyAtmosphere()
+{
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+	StopComponent(KitchenReadyAudioComponent);
+}
+
+bool AMyProjectGameMode::ShouldPlayKitchenReadyAtmosphere() const
+{
+	if (!HonorKitchenAudioSettings::IsSoundEnabled())
+	{
+		return false;
+	}
+	if (PreRoundState != EPreRoundState::ReadyToStart)
+	{
+		return false;
+	}
+	// Как в HUD: экран «Кухня готова» не поверх intro/loading и не в главном меню.
+	if (IsFrontEndVideoBlockingUI())
+	{
+		return false;
+	}
+	if (FrontEndScreen != EFrontEndScreen::None)
+	{
+		return false;
+	}
+	return true;
+}
+
+void AMyProjectGameMode::RefreshKitchenReadyAtmosphere()
+{
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+
+	UWorld* World = GetWorld();
+	if (!World || !ShouldPlayKitchenReadyAtmosphere())
+	{
+		StopKitchenReadyAtmosphere();
+		return;
+	}
+
+	USoundBase* const Sound = HonorKitchenAtmosphereAudio::GetKitchenReadySound();
+	if (!Sound)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("KitchenReady: missing /Game/Audio/Atmosphere/KitchenReady_Master — run Tools/import_atmosphere_sounds.py"));
+		return;
+	}
+
+	const float Volume = KitchenReadyVolume * HonorKitchenAudioSettings::GetMusicVolume()
+		* HonorKitchenAudioSettings::GetMasterVolume();
+
+	if (KitchenReadyAudioComponent && KitchenReadyAudioComponent->IsPlaying()
+		&& KitchenReadyAudioComponent->Sound == Sound)
+	{
+		KitchenReadyAudioComponent->SetVolumeMultiplier(Volume);
+		return;
+	}
+
+	StopKitchenReadyAtmosphere();
+	KitchenReadyAudioComponent = UGameplayStatics::SpawnSound2D(
+		World,
+		Sound,
+		Volume,
+		1.f,
+		0.f,
+		nullptr,
+		false,
+		false);
+	if (KitchenReadyAudioComponent)
+	{
+		KitchenReadyAudioComponent->bAutoDestroy = false;
+		KitchenReadyAudioComponent->OnAudioFinished.Clear();
+		KitchenReadyAudioComponent->OnAudioFinished.AddUniqueDynamic(
+			this,
+			&AMyProjectGameMode::OnKitchenReadyStingFinished);
+	}
+}
+
+void AMyProjectGameMode::OnKitchenReadyStingFinished()
+{
+	StartRoundAmbientLoop();
+}
+
+bool AMyProjectGameMode::ShouldPlayRoundAmbient() const
+{
+	if (!HonorKitchenAudioSettings::IsSoundEnabled() || HonorKitchenAudioSettings::IsDeathStingActive()
+		|| bDeathStingActive)
+	{
+		return false;
+	}
+	if (bRoundWon || bRoundLost || IsLocalGameplayPaused())
+	{
+		return false;
+	}
+	if (PreRoundState != EPreRoundState::InRound && PreRoundState != EPreRoundState::ReadyToStart)
+	{
+		return false;
+	}
+	return RoundAmbientAudioComponent != nullptr;
+}
+
+void AMyProjectGameMode::StopRoundAmbientLoop()
+{
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+	StopComponent(RoundAmbientAudioComponent);
+}
+
+void AMyProjectGameMode::StartRoundAmbientLoop()
+{
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+
+	if (!HonorKitchenAudioSettings::IsSoundEnabled())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	USoundBase* const Sound = HonorKitchenAtmosphereAudio::GetRoundAmbientLoop();
+	if (!Sound)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Round ambient: missing sound_19805 — run Tools/import_atmosphere_sounds.py"));
+		return;
+	}
+
+	const float Volume = RoundAmbientVolume * HonorKitchenAudioSettings::GetMusicVolume()
+		* HonorKitchenAudioSettings::GetMasterVolume();
+
+	if (RoundAmbientAudioComponent && RoundAmbientAudioComponent->Sound == Sound)
+	{
+		RoundAmbientAudioComponent->SetVolumeMultiplier(Volume);
+		RoundAmbientAudioComponent->SetPaused(false);
+		if (!RoundAmbientAudioComponent->IsPlaying())
+		{
+			RoundAmbientAudioComponent->Play();
+		}
+		return;
+	}
+
+	StopRoundAmbientLoop();
+	RoundAmbientAudioComponent = UGameplayStatics::SpawnSound2D(
+		World,
+		Sound,
+		Volume,
+		1.f,
+		0.f,
+		nullptr,
+		false,
+		false);
+	if (RoundAmbientAudioComponent)
+	{
+		RoundAmbientAudioComponent->bAutoDestroy = false;
+		RoundAmbientAudioComponent->Play();
+	}
+}
+
+void AMyProjectGameMode::RefreshRoundAmbientPlayback()
+{
+	if (!RoundAmbientAudioComponent)
+	{
+		return;
+	}
+
+	const float Volume = RoundAmbientVolume * HonorKitchenAudioSettings::GetMusicVolume()
+		* HonorKitchenAudioSettings::GetMasterVolume();
+	RoundAmbientAudioComponent->SetVolumeMultiplier(Volume);
+
+	const bool bShouldPlay = ShouldPlayRoundAmbient();
+	if (bShouldPlay)
+	{
+		RoundAmbientAudioComponent->SetPaused(false);
+		if (!RoundAmbientAudioComponent->IsPlaying())
+		{
+			RoundAmbientAudioComponent->Play();
+		}
+	}
+	else
+	{
+		RoundAmbientAudioComponent->SetPaused(true);
+	}
+}
+
+void AMyProjectGameMode::StopInRoundAtmosphereTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(InRoundAtmosphereTimerHandle);
+	}
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+	StopComponent(AtmosphereStingAudioComponent);
+}
+
+void AMyProjectGameMode::StartInRoundAtmosphereTimer()
+{
+	StopInRoundAtmosphereTimer();
+	if (!CanPlayInRoundAtmosphere())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float Interval = FMath::Max(30.f, AtmosphereStingIntervalSeconds);
+	World->GetTimerManager().SetTimer(
+		InRoundAtmosphereTimerHandle,
+		this,
+		&AMyProjectGameMode::OnInRoundAtmosphereTimer,
+		Interval,
+		true);
+}
+
+void AMyProjectGameMode::PlayRandomAtmosphereSting()
+{
+	using namespace HonorKitchenAtmosphereAudioPrivate;
+
+	if (!CanPlayInRoundAtmosphere())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	USoundBase* const Sound = HonorKitchenAtmosphereAudio::PickRandomRoundSting();
+	if (!Sound)
+	{
+		return;
+	}
+
+	StopComponent(AtmosphereStingAudioComponent);
+
+	const float Volume = AtmosphereStingVolume * HonorKitchenAudioSettings::GetMusicVolume()
+		* HonorKitchenAudioSettings::GetMasterVolume();
+
+	AtmosphereStingAudioComponent = UGameplayStatics::SpawnSound2D(
+		World,
+		Sound,
+		Volume,
+		1.f,
+		0.f,
+		nullptr,
+		false,
+		true);
+}
+
+void AMyProjectGameMode::OnInRoundAtmosphereTimer()
+{
+	PlayRandomAtmosphereSting();
+}
+
 void AMyProjectGameMode::QuitFromMenu()
 {
 	if (UWorld* W = GetWorld())
@@ -1654,7 +2175,7 @@ void AMyProjectGameMode::QuitFromMenu()
 
 bool AMyProjectGameMode::TryWriteSaveGame()
 {
-	if (PreRoundState != EPreRoundState::InRound || bRoundWon || bRoundLost)
+	if (PreRoundState != EPreRoundState::InRound || bRoundWon || bRoundLost || bDeathStingActive)
 	{
 		return false;
 	}
@@ -1965,6 +2486,7 @@ void AMyProjectGameMode::OnLoadingVideoPlaybackEnded()
 	}
 
 	RefreshFrontEndMusic();
+	RefreshKitchenReadyAtmosphere();
 }
 
 void AMyProjectGameMode::OnKitchenPreparationComplete()
@@ -1974,6 +2496,8 @@ void AMyProjectGameMode::OnKitchenPreparationComplete()
 
 void AMyProjectGameMode::ShowMainMenuAfterBoot()
 {
+	StopKitchenReadyAtmosphere();
+	StopRoundAmbientLoop();
 	BootFlow = EHonorKitchenBootFlow::MainMenu;
 	FrontEndScreen = EFrontEndScreen::MainMenu;
 	bPauseSettingsOpen = false;

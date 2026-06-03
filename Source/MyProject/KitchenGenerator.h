@@ -107,6 +107,29 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Kitchen|Spawn", meta = (ClampMin = "300.0", ClampMax = "6000.0"))
 	float MinPortalDistanceFromStartUU = 1200.f;
 
+	/** Point lights внутри комнат на потолке (атмосфера хоррор-кухни). */
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere")
+	bool bSpawnRoomAtmosphereLights = true;
+
+	/** Комнат без света за один Regenerate (случайный выбор, не старт/портал). */
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere", meta = (ClampMin = "0", ClampMax = "6"))
+	int32 DarkRoomsPerRun = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere", meta = (ClampMin = "50.0", ClampMax = "12000.0"))
+	float RoomLightIntensity = 780.f;
+
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere", meta = (ClampMin = "50.0", ClampMax = "12000.0"))
+	float PortalRoomLightIntensity = 570.f;
+
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere", meta = (ClampMin = "1.0", ClampMax = "8.0"))
+	float RoomLightAttenuationCells = 2.4f;
+
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere")
+	FLinearColor RoomLightColor = FLinearColor(1.f, 0.84f, 0.62f);
+
+	UPROPERTY(EditAnywhere, Category = "Kitchen|Atmosphere")
+	FLinearColor PortalRoomLightColor = FLinearColor(0.72f, 0.82f, 1.f);
+
 	UPROPERTY(VisibleAnywhere, Category = "Kitchen|Debug")
 	int32 LastUsedSeed = 0;
 
@@ -193,6 +216,16 @@ protected:
 	bool ComputePortalWallPlacement(FVector& OutWorldLocation, FVector& OutNormalIntoRoom) const;
 	void BuildEnemySpawnPoints(FRandomStream& Rand);
 	void SpawnTomatoesFromPoints();
+	void SpawnRoomAtmosphereLights(FRandomStream& Rand);
+	void CollectRoomLightCells(int32 RoomIdx, TArray<FIntPoint>& OutCells) const;
+	FVector MakeRoomCeilingLightLocation(FIntPoint Cell, FRandomStream& Rand) const;
+	bool TryPickRoomLightLocation(
+		int32 RoomIdx,
+		FRandomStream& Rand,
+		const TArray<FVector>& ExistingInRoom,
+		float MinSeparationUU,
+		FVector& OutWorld) const;
+	void SpawnRoomPointLightAt(const FVector& WorldLoc, bool bPortalRoom);
 
 	/** Обновляет bLastNavConnectivityToPortal после пересборки NavMesh (лучший effort). */
 	void ValidateAndCacheNavConnectivityToPortal();

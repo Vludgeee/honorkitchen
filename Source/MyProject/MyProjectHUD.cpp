@@ -35,7 +35,14 @@ namespace DamageScreenVignette
 			+ FMath::Min(FMath::Max(Inner.X, Inner.Y), 0.f) - Radius;
 	}
 
-	static void DrawRoundedOverlay(AHUD* HUD, UCanvas* Canvas, float ScreenW, float ScreenH, float FlashAlpha)
+	static void DrawRoundedOverlay(
+		AHUD* HUD,
+		UCanvas* Canvas,
+		float ScreenW,
+		float ScreenH,
+		float FlashAlpha,
+		const FLinearColor& EdgeRgb,
+		float MaxEdgeStrength = 0.5f)
 	{
 		if (!HUD || !Canvas || FlashAlpha <= 0.01f)
 		{
@@ -44,8 +51,7 @@ namespace DamageScreenVignette
 
 		// Яркость падает быстрее геометрии — короткий «удар», дольше — только съём рамки.
 		const float ImpulseDim = FMath::Pow(FlashAlpha, 2.25f);
-		const float EdgeStrength = FMath::Lerp(0.14f, 0.5f, FlashAlpha) * ImpulseDim;
-		const FLinearColor EdgeRgb(0.92f, 0.06f, 0.04f, 1.f);
+		const float EdgeStrength = FMath::Lerp(0.14f, MaxEdgeStrength, FlashAlpha) * ImpulseDim;
 		const float BandFracY = FMath::Lerp(0.12f, 0.28f, FlashAlpha);
 		const float BandFracX = FMath::Lerp(0.10f, 0.22f, FlashAlpha);
 		const float InnerHalfX = ScreenW * (0.5f - BandFracX);
@@ -108,13 +114,31 @@ namespace DamageScreenVignette
 			}
 		}
 
-		HUD->DrawRect(
-			FLinearColor(0.75f, 0.02f, 0.02f, ImpulseDim * 0.24f),
-			0.f,
-			0.f,
-			ScreenW,
-			ScreenH);
+		const FLinearColor FillTint(
+			EdgeRgb.R * 0.82f,
+			EdgeRgb.G * 0.35f,
+			EdgeRgb.B * 0.35f,
+			ImpulseDim * 0.24f);
+		HUD->DrawRect(FillTint, 0.f, 0.f, ScreenW, ScreenH);
 	}
+}
+
+namespace ThreatScreenVignette
+{
+	/** Макс. сила HUD-рамки при погоне (доля от исходной). */
+	static constexpr float StrengthScale = 0.15f;
+
+	static void DrawThreatOverlay(AHUD* HUD, UCanvas* Canvas, float ScreenW, float ScreenH, float Alpha)
+	{
+		const FLinearColor EdgeRgb(0.42f, 0.04f, 0.14f, 1.f);
+		const float ScaledAlpha = Alpha * StrengthScale;
+		DamageScreenVignette::DrawRoundedOverlay(HUD, Canvas, ScreenW, ScreenH, ScaledAlpha, EdgeRgb, 0.3f * StrengthScale);
+	}
+}
+
+void AMyProjectHUD::SetThreatScreenPulseAlpha(float Alpha)
+{
+	ThreatScreenPulseAlpha = FMath::Clamp(Alpha, 0.f, 1.f);
 }
 
 void AMyProjectHUD::ToggleDebugTelemetry()
@@ -332,7 +356,7 @@ void AMyProjectHUD::DrawHUD()
 			return;
 		}
 	}
-	if (GM && GM->GetPreRoundState() == EPreRoundState::InRound && GM->IsRoundLost())
+	if (GM && GM->GetPreRoundState() == EPreRoundState::InRound && GM->IsRoundLost() && !GM->IsDeathStingActive())
 	{
 		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.92f), 0.f, 0.f, Canvas->ClipX, Canvas->ClipY);
 		DrawText(TEXT("ПОРАЖЕНИЕ"), FColor::Red, Canvas->ClipX * 0.5f - 110.f, Canvas->ClipY * 0.40f, Font, Scale * 1.3f, false);
@@ -346,7 +370,8 @@ void AMyProjectHUD::DrawHUD()
 		DrawText(TEXT("Нажмите Enter для новой игры"), FColor::White, Canvas->ClipX * 0.5f - 240.f, Canvas->ClipY * 0.47f, Font, Scale * 1.0f, false);
 		return;
 	}
-	if (Char && !Char->IsDead())
+	const bool bDrawGameplayHud = Char && (!Char->IsDead() || (GM && GM->IsDeathStingActive()));
+	if (bDrawGameplayHud)
 	{
 		const float Pct = FMath::Clamp(Char->MaxHealth > 0.f ? Char->CurrentHealth / Char->MaxHealth : 0.f, 0.f, 1.f);
 		const float BarX = Margin;
@@ -499,13 +524,26 @@ void AMyProjectHUD::DrawHUD()
 		}
 	}
 
-	if (Char && !Char->IsDead() && !PC->IsPaused())
+	const bool bDrawDamageVignette = Char && !PC->IsPaused()
+		&& (!Char->IsDead() || (GM && GM->IsDeathStingActive()));
+	if (bDrawDamageVignette)
 	{
 		const float FlashAlpha = Char->GetDamageScreenFlashAlpha();
 		if (FlashAlpha > 0.01f)
 		{
-			DamageScreenVignette::DrawRoundedOverlay(this, Canvas, Canvas->ClipX, Canvas->ClipY, FlashAlpha);
+			const FLinearColor DamageEdge(0.92f, 0.06f, 0.04f, 1.f);
+			DamageScreenVignette::DrawRoundedOverlay(
+				this, Canvas, Canvas->ClipX, Canvas->ClipY, FlashAlpha, DamageEdge, 0.5f);
 		}
+	}
+
+	const bool bDrawThreatVignette = Char && !PC->IsPaused()
+		&& ThreatScreenPulseAlpha > 0.02f
+		&& (!Char->IsDead() || (GM && GM->IsDeathStingActive()));
+	if (bDrawThreatVignette)
+	{
+		ThreatScreenVignette::DrawThreatOverlay(
+			this, Canvas, Canvas->ClipX, Canvas->ClipY, ThreatScreenPulseAlpha);
 	}
 }
 

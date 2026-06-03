@@ -8,10 +8,9 @@
 ACrumbPickup::ACrumbPickup()
 {
 	ConfigurePickup(EInventoryItemType::Crumb, 1);
-	PickupSphereRadius = 48.f;
 	if (PickupVisual)
 	{
-		PickupVisual->SetRelativeScale3D(FVector(0.65f, 0.65f, 0.4f));
+		PickupVisual->SetRelativeScale3D(FVector(1.95f, 1.95f, 1.2f));
 	}
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> CrumbMat(TEXT("/Game/Materials/M_Crumb.M_Crumb"));
 	if (CrumbMat.Succeeded())

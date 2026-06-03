@@ -16,6 +16,7 @@
 #include "HonorKitchenFrontEndUI.h"
 #include "HonorKitchenSettingsUI.h"
 #include "Camera/PlayerCameraManager.h"
+#include "HonorKitchenAtmosphereVisuals.h"
 
 AMyProjectPlayerController::AMyProjectPlayerController()
 {
@@ -240,12 +241,18 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 		{
 			SetPause(false);
 			SetPauseInputMode(false);
+			if (GM)
+			{
+				GM->RefreshWorldTimeFreeze();
+			}
 			return;
 		}
-		if (GM && GM->GetPreRoundState() == EPreRoundState::InRound && !GM->IsRoundWon() && !GM->IsRoundLost())
+		if (GM && GM->GetPreRoundState() == EPreRoundState::InRound && !GM->IsRoundWon() && !GM->IsRoundLost()
+			&& !GM->IsDeathStingActive())
 		{
 			SetPause(true);
 			SetPauseInputMode(true);
+			GM->RefreshWorldTimeFreeze();
 			return;
 		}
 	}
@@ -282,6 +289,10 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 					PlayUiClickSound();
 					SetPause(false);
 					SetPauseInputMode(false);
+					if (GM)
+					{
+						GM->RefreshWorldTimeFreeze();
+					}
 					return;
 				}
 				if (HonorKitchenSettingsUI::HitTestMenuRow(MX, MY, ClipX, HonorKitchenSettingsUI::PauseRowSave(ClipY)) && GM)
@@ -301,6 +312,7 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 					PlayUiClickSound();
 					SetPause(false);
 					SetPauseInputMode(false);
+					GM->RefreshWorldTimeFreeze();
 					GM->ReturnToMainMenu();
 					return;
 				}
@@ -314,7 +326,8 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 	{
 		if (GM)
 		{
-			if (GM->GetPreRoundState() == EPreRoundState::InRound && (GM->IsRoundWon() || GM->IsRoundLost()))
+			if (GM->GetPreRoundState() == EPreRoundState::InRound
+				&& (GM->IsRoundWon() || (GM->IsRoundLost() && !GM->IsDeathStingActive())))
 			{
 				GM->RequestNewRound();
 			}
@@ -327,6 +340,11 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 	}
 
 	if (GM && GM->GetPreRoundState() != EPreRoundState::InRound)
+	{
+		return;
+	}
+
+	if (GM && GM->IsDeathStingActive())
 	{
 		return;
 	}
@@ -414,6 +432,8 @@ void AMyProjectPlayerController::Tick(float DeltaSeconds)
 			RestartCurrentLevel();
 		}
 	}
+
+	HonorKitchenAtmosphereVisuals::UpdateLocalThreatVisuals(this, DeltaSeconds);
 }
 
 void AMyProjectPlayerController::BeginPlay()

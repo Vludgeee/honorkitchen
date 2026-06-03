@@ -47,7 +47,15 @@ copy Tools\installer_game_source_path.example.txt Tools\installer_game_source_pa
 .\Tools\BuildInstaller.ps1
 ```
 
-3. Готовый установщик появится в **`Dist\HonorKitchen_Demo_Setup_0.2.2.exe`** (версия задаётся в `Tools\InnoSetup_MyProject_Demo.iss`, поле `MyAppVersion`).
+3. Готовый установщик появится в **`Dist\HonorKitchen_Demo_Setup_0.3.0.exe`** (версия задаётся в `Tools\InnoSetup_MyProject_Demo.iss`, поле `MyAppVersion`).
+
+### Одной командой (упаковка + установщик)
+
+```powershell
+.\Tools\PackageWindowsShipping.ps1 -BuildInstaller
+```
+
+Требуется закрытый редактор UE и установленный Inno Setup 6.
 
 В установку автоматически копируется **`Docs\README_DEMO.txt`** как `README_DEMO.txt` в папку игры (флаг «показать readme» после установки).
 

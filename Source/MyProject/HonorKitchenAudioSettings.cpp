@@ -16,6 +16,7 @@ namespace HonorKitchenAudioSettingsPrivate
 	static float MusicVolume = 1.f;
 	static float MonsterVolume = 1.f;
 	static bool bLoaded = false;
+	static bool bDeathStingActive = false;
 
 	static void EnsureLoaded()
 	{
@@ -185,4 +186,18 @@ void HonorKitchenAudioSettings::EnforceDeveloperModeRuntime(UWorld* World)
 			Char->ForcePortalNavigatorOff();
 		}
 	}
+}
+
+bool HonorKitchenAudioSettings::IsDeathStingActive()
+{
+	using namespace HonorKitchenAudioSettingsPrivate;
+	EnsureLoaded();
+	return bDeathStingActive;
+}
+
+void HonorKitchenAudioSettings::SetDeathStingActive(bool bActive)
+{
+	using namespace HonorKitchenAudioSettingsPrivate;
+	EnsureLoaded();
+	bDeathStingActive = bActive;
 }
